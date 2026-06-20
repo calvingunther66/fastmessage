@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+web/dist/
+*.tsbuildinfo
+
+# Runtime data (server state — keep ciphertext + keys off git)
+server/data/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+
+# Secrets / local config
+.env
+.env.local
+*.local
+
+# Cloudflare tunnel credentials
+infra/cloudflared/*.json
+!infra/cloudflared/config.example.yml
+
+# Logs
+*.log
+logs/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,21 @@
+# File-based Cloudflare Tunnel config (alternative to the dashboard token).
+#
+# 1. cloudflared tunnel login
+# 2. cloudflared tunnel create fastmessage      # writes <TUNNEL_ID>.json here
+# 3. cloudflared tunnel route dns fastmessage message.calvingunther.com
+# 4. Copy this file to infra/cloudflared/config.yml and set the ids/paths.
+# 5. Run cloudflared with: tunnel --config infra/cloudflared/config.yml run
+#
+# Both the web app (/) and the backend connector (/app) are served by the same
+# origin, so a single ingress rule covers everything.
+
+tunnel: <TUNNEL_ID>
+credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: message.calvingunther.com
+    service: http://server:8080
+    originRequest:
+      # Required so the /app/ws WebSocket upgrades pass through.
+      noTLSVerify: true
+  - service: http_status:404

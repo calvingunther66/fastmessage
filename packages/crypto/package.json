@@ -1,0 +1,25 @@
+{
+  "name": "@fastmessage/crypto",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastmessage/shared": "workspace:*",
+    "@matrix-org/olm": "^3.2.15",
+    "libsodium-wrappers": "^0.7.15"
+  },
+  "devDependencies": {
+    "@types/libsodium-wrappers": "^0.7.14",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

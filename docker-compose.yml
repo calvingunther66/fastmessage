@@ -1,0 +1,49 @@
+# FastMessage on a Raspberry Pi.
+#
+#   cp .env.example .env   # then fill in SESSION_SECRET + TUNNEL_TOKEN
+#   docker compose up -d --build
+#
+# The server never has a public port: cloudflared dials OUT to Cloudflare and
+# message.calvingunther.com is routed to http://server:8080 from the Zero Trust
+# dashboard (or infra/cloudflared/config.example.yml for the file-based setup).
+
+services:
+  server:
+    build: .
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "8080"
+      DATA_DIR: /data
+      WEB_DIST: /app/web/dist
+    volumes:
+      - fastmessage-data:/data
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      - server
+
+  # Optional: TURN/STUN for voice & video (Phase 7). Needs UDP, so it runs on
+  # the host network and cannot go through the Cloudflare Tunnel (see README).
+  #   docker compose --profile calls up -d
+  coturn:
+    image: coturn/coturn:latest
+    profiles: ["calls"]
+    network_mode: host
+    restart: unless-stopped
+    command: >
+      -n --use-auth-secret
+      --static-auth-secret=${TURN_SECRET}
+      --realm=${TURN_REALM}
+      --no-cli --no-tls --no-dtls
+      --min-port=49160 --max-port=49200
+
+volumes:
+  fastmessage-data:

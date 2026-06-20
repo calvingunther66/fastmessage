@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/build
+**/.git
+**/*.log
+server/data
+data
+.env
+.env.local
+web/dev-dist
