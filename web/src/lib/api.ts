@@ -7,10 +7,12 @@ import {
   type GroupInfo,
   type GroupListResponse,
   type LoginRequest,
+  type PushSubscribeRequest,
   type RegisterRequest,
   type ReplenishRequest,
   type TurnResponse,
   type UserLookupResponse,
+  type VapidResponse,
 } from "@fastmessage/shared";
 
 export class ApiError extends Error {
@@ -101,6 +103,9 @@ export const api = {
     return (await res.json()) as { blobId: string };
   },
   turn: (token: string) => req<TurnResponse>("/turn", { token }),
+  getVapid: () => req<VapidResponse>("/push/vapid"),
+  subscribePush: (body: PushSubscribeRequest, token: string) =>
+    req<{ ok: boolean }>("/push/subscribe", { method: "POST", token, body }),
   async downloadBlob(
     blobId: string,
     token: string,

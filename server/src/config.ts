@@ -22,6 +22,10 @@ const Env = z.object({
   TURN_SECRET: z.string().default(""),
   TURN_PUBLIC_HOST: z.string().default(""),
   TURN_REALM: z.string().default(""),
+  /** Web Push (VAPID). Generate with server/scripts/gen-vapid.mjs. */
+  VAPID_PUBLIC_KEY: z.string().default(""),
+  VAPID_PRIVATE_KEY: z.string().default(""),
+  VAPID_SUBJECT: z.string().default("mailto:admin@example.com"),
 });
 
 const env = Env.parse(process.env);

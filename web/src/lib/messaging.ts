@@ -20,6 +20,7 @@ import { api, ApiError } from "./api.js";
 import { ensureCrypto } from "./crypto-init.js";
 import { storage, type StoredMessageRec } from "./db.js";
 import { decryptToBlob, encryptFile, type AttachmentMeta } from "./files.js";
+import { enablePush } from "./push.js";
 
 const INITIAL_ONE_TIME_KEYS = 20;
 const REPLENISH_BATCH = 5;
@@ -127,6 +128,7 @@ class Messenger {
       this.set({ status: "ready", identity });
       this.connect();
       void this.refreshGroups();
+      void enablePush(identity.token);
     } else {
       this.set({ status: "loggedOut" });
     }
@@ -231,6 +233,7 @@ class Messenger {
       });
       this.connect();
       void this.refreshGroups();
+      void enablePush(identity.token);
     } catch (err) {
       this.set({ error: this.describeError(err) });
       throw err;

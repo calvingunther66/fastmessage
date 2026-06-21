@@ -370,6 +370,39 @@ function toGroupInfo(row: GroupRow): GroupInfo {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Web Push subscriptions
+// ---------------------------------------------------------------------------
+
+export interface PushSub {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+}
+
+const insertPushSub = db.prepare(
+  `INSERT OR REPLACE INTO push_subscriptions (endpoint, user_id, device_id, p256dh, auth, created_at)
+   VALUES (?, ?, ?, ?, ?, ?)`,
+);
+const selectPushForDevice = db.prepare(
+  `SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ? AND device_id = ?`,
+);
+const deletePushSub = db.prepare(
+  `DELETE FROM push_subscriptions WHERE endpoint = ?`,
+);
+
+export const pushSubs = {
+  add(userId: string, deviceId: string, sub: PushSub) {
+    insertPushSub.run(sub.endpoint, userId, deviceId, sub.p256dh, sub.auth, Date.now());
+  },
+  listForDevice(userId: string, deviceId: string): PushSub[] {
+    return selectPushForDevice.all(userId, deviceId) as PushSub[];
+  },
+  delete(endpoint: string) {
+    deletePushSub.run(endpoint);
+  },
+};
+
 export const groups = {
   create(name: string, createdBy: string): GroupInfo {
     const id = randomUUID();

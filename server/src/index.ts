@@ -12,6 +12,7 @@ import { groupRoutes } from "./routes/groups.js";
 import { keyRoutes } from "./routes/keys.js";
 import { lockdownRoutes } from "./routes/lockdown.js";
 import { messageRoutes } from "./routes/messages.js";
+import { pushRoutes } from "./routes/push.js";
 import { turnRoutes } from "./routes/turn.js";
 import { registerWebSocket } from "./ws.js";
 
@@ -59,6 +60,7 @@ await app.register(
     await blobRoutes(api);
     await lockdownRoutes(api);
     await turnRoutes(api);
+    await pushRoutes(api);
   },
   { prefix: API_V1 },
 );

@@ -19,11 +19,12 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
       registerType: "autoUpdate",
       injectRegister: "auto",
-      workbox: {
-        // Never let the SPA fallback swallow the backend connector or socket.
-        navigateFallbackDenylist: [/^\/app/],
+      injectManifest: {
         globPatterns: ["**/*.{js,css,html,svg,wasm,png}"],
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
       },

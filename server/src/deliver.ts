@@ -1,5 +1,6 @@
 import type { OutgoingEnvelope, StoredMessage } from "@fastmessage/shared";
 import { hub } from "./hub.js";
+import { notifyDevice } from "./push.js";
 import { messages } from "./repo.js";
 import type { AuthContext } from "./tokens.js";
 
@@ -20,6 +21,8 @@ export function sendEnvelope(
     envelope: out.envelope,
     sentAt: Date.now(),
   });
-  hub.deliver(out.toUserId, out.toDeviceId, stored);
+  const live = hub.deliver(out.toUserId, out.toDeviceId, stored);
+  // If the device isn't connected, wake it with a content-free push.
+  if (!live) void notifyDevice(out.toUserId, out.toDeviceId);
   return stored;
 }

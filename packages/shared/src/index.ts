@@ -117,6 +117,21 @@ export const TurnResponse = z.object({
 export type TurnResponse = z.infer<typeof TurnResponse>;
 
 // ---------------------------------------------------------------------------
+// Web Push (content-free wake notifications)
+// ---------------------------------------------------------------------------
+
+export const PushSubscribeRequest = z.object({
+  subscription: z.object({
+    endpoint: z.string(),
+    keys: z.object({ p256dh: z.string(), auth: z.string() }),
+  }),
+});
+export type PushSubscribeRequest = z.infer<typeof PushSubscribeRequest>;
+
+export const VapidResponse = z.object({ publicKey: z.string() });
+export type VapidResponse = z.infer<typeof VapidResponse>;
+
+// ---------------------------------------------------------------------------
 // Key directory
 // ---------------------------------------------------------------------------
 

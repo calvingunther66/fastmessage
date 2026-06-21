@@ -146,15 +146,18 @@ Implemented and verified:
   coturn); offer/answer/ICE signaling is E2E-encrypted and relayed through the
   normal pipe, so the server can neither read nor MITM a call
 - ✅ **Tamper-lockdown + dual-key unlock** — see below
+- ✅ **Multi-device sync** — sign in on web + phone; sent messages mirror to your
+  own devices via encrypted carbons, and incoming already fans out to all devices
+- ✅ **Web Push** — content-free wake notifications when a device is offline
 - ✅ Hardening — per-IP rate limiting on auth, security headers
 - ✅ Olm/Megolm client library (unit-tested) + IndexedDB persistence
 - ✅ Installable PWA; Dockerized server that serves it; Cloudflare Tunnel stack
 
 Planned next (scaffolding in place):
 
-- ⏳ **Multi-device** — QR device-linking + fan-out to all of a user's devices
-- ⏳ **Web Push** notifications (VAPID)
+- ⏳ **QR device-linking** — add a device without re-entering the password
 - ⏳ **At-rest DB encryption** (SQLCipher) + automated backups
+- ⏳ **Safety-number verification** UI (fingerprints are already exchanged)
 
 ## Tamper-lockdown (dual-key unlock)
 
