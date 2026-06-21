@@ -274,6 +274,22 @@ export function formatFingerprint(ed25519: string): string {
   return (ed25519.match(/.{1,4}/g) ?? []).join(" ");
 }
 
+/**
+ * A deterministic "safety number" for two device signing keys. Both sides
+ * compute the same value (keys are sorted first), so comparing it out-of-band
+ * detects a man-in-the-middle. 60 digits, grouped in fives.
+ */
+export function safetyNumber(signingKeyA: string, signingKeyB: string): string {
+  const [a, b] = [signingKeyA, signingKeyB].sort();
+  const util = new Olm.Utility();
+  const hashB64 = util.sha256(`${a}|${b}`);
+  util.free();
+  const bin = atob(hashB64);
+  let digits = "";
+  for (let i = 0; i < 30; i++) digits += (bin.charCodeAt(i) % 100).toString().padStart(2, "0");
+  return (digits.match(/.{1,5}/g) ?? []).join(" ");
+}
+
 function cryptoObj(): Crypto {
   const c = (globalThis as { crypto?: Crypto }).crypto;
   if (!c) throw new Error("WebCrypto unavailable in this environment");

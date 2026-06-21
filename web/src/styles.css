@@ -125,6 +125,13 @@ form input {
 .modal h2 { margin-top: 0; }
 .modal p { color: var(--muted); font-size: 0.9rem; }
 .recovery-key { display: block; word-break: break-all; background: var(--bg); border: 1px solid var(--accent); border-radius: 10px; padding: 0.75rem; margin: 0.75rem 0; font-family: ui-monospace, monospace; color: var(--accent); }
+.verify-section { border-top: 1px solid var(--line); padding-top: 0.75rem; margin-top: 0.75rem; }
+.verify-label { font-weight: 600; font-size: 0.85rem; margin-bottom: 0.35rem; }
+.verified-badge { color: #34d399; font-weight: 700; }
+.fingerprint { display: block; word-break: break-all; font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); background: var(--bg); border-radius: 8px; padding: 0.5rem; }
+.safety-number-label { font-size: 0.72rem; color: var(--muted); margin: 0.5rem 0 0.2rem; }
+.safety-number { display: block; font-family: ui-monospace, monospace; letter-spacing: 1px; background: var(--bg); border-radius: 8px; padding: 0.5rem; margin-bottom: 0.5rem; }
+.modal { max-height: 85vh; overflow-y: auto; }
 .modal-actions { display: flex; gap: 0.5rem; }
 .modal-actions .primary, .modal-actions .tab { flex: 1; padding: 0.6rem; border-radius: 10px; cursor: pointer; }
 .attach { display: flex; align-items: center; gap: 0.5rem; background: rgba(255,255,255,0.08); border: 1px solid var(--line); color: var(--text); padding: 0.5rem 0.7rem; border-radius: 10px; }

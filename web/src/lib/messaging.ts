@@ -63,6 +63,8 @@ export interface MessengerState {
   error?: string;
   /** Shown once right after registration so the user can save it. */
   recoveryKey?: string;
+  /** Peer device signing keys the user has manually verified. */
+  verified: string[];
 }
 
 type Listener = () => void;
@@ -79,8 +81,10 @@ class Messenger {
     status: "loading",
     connected: false,
     conversations: {},
+    verified: [],
   };
   private listeners = new Set<Listener>();
+  private verifiedSet = new Set<string>();
 
   private account: CryptoAccount | null = null;
   private pickleKey = "";
@@ -125,7 +129,10 @@ class Messenger {
       await this.loadSessions();
       await this.loadGroupInSessions();
       await this.loadConversations();
-      this.set({ status: "ready", identity });
+      this.verifiedSet = new Set(
+        (await storage.getKV<string[]>("verifiedKeys")) ?? [],
+      );
+      this.set({ status: "ready", identity, verified: [...this.verifiedSet] });
       this.connect();
       void this.refreshGroups();
       void enablePush(identity.token);
@@ -225,10 +232,12 @@ class Messenger {
       await storage.setKV("pickleKey", this.pickleKey);
       await this.saveAccount();
 
+      this.verifiedSet = new Set();
       this.set({
         status: "ready",
         identity,
         conversations: {},
+        verified: [],
         recoveryKey: mode === "register" ? auth.recoveryKey : undefined,
       });
       this.connect();
@@ -273,11 +282,13 @@ class Messenger {
     this.sessions.clear();
     this.groupOut.clear();
     this.groupIn.clear();
+    this.verifiedSet.clear();
     this.set({
       status: "loggedOut",
       identity: undefined,
       conversations: {},
       activeConvId: undefined,
+      verified: [],
     });
   }
 
@@ -951,6 +962,21 @@ class Messenger {
 
   fingerprint(): string {
     return this.account ? this.account.identityKeys().ed25519 : "";
+  }
+
+  // ---- safety-number verification ---------------------------------------
+  isVerified(signingKey: string): boolean {
+    return this.verifiedSet.has(signingKey);
+  }
+  async toggleVerified(signingKey: string): Promise<void> {
+    if (this.verifiedSet.has(signingKey)) this.verifiedSet.delete(signingKey);
+    else this.verifiedSet.add(signingKey);
+    const arr = [...this.verifiedSet];
+    await storage.setKV("verifiedKeys", arr);
+    this.set({ verified: arr });
+  }
+  async peerDevices(userId: string) {
+    return (await api.devices(userId, this.id.token)).devices;
   }
 
   clearError() {

@@ -3,10 +3,12 @@ import { useMessenger } from "../hooks.js";
 import { calls } from "../lib/calls.js";
 import { messenger } from "../lib/messaging.js";
 import { Attachment } from "./Attachment.js";
+import { VerifyModal } from "./VerifyModal.js";
 
 export function ChatView() {
   const state = useMessenger();
   const [draft, setDraft] = useState("");
+  const [showVerify, setShowVerify] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const conv = state.activeConvId
     ? state.conversations[state.activeConvId]
@@ -57,6 +59,9 @@ export function ChatView() {
         </div>
         {conv.kind === "dm" && (
           <div className="call-buttons">
+            <button type="button" title="Verify safety numbers" onClick={() => setShowVerify(true)}>
+              🛡️
+            </button>
             <button
               type="button"
               title="Voice call"
@@ -74,6 +79,9 @@ export function ChatView() {
           </div>
         )}
       </header>
+      {showVerify && (
+        <VerifyModal peerUserId={conv.id} onClose={() => setShowVerify(false)} />
+      )}
 
       <div className="messages">
         {conv.messages.map((m) => (
