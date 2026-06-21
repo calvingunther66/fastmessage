@@ -547,6 +547,28 @@ class Messenger {
     for (const device of devices) {
       await this.sendOlmContent(peerUserId, device, content, msgId);
     }
+    await this.sendCarbon(peerUserId, content, msgId);
+  }
+
+  /** Mirror a sent message to our own other devices for multi-device sync. */
+  private async sendCarbon(
+    peerUserId: string,
+    content: MessageContent,
+    msgId: string,
+  ): Promise<void> {
+    if (content.kind !== "text" && content.kind !== "attachment") return;
+    try {
+      const mine = await api.devices(this.id.userId, this.id.token);
+      const others = mine.devices.filter(
+        (d) => d.identityKey !== this.myIdentityKey,
+      );
+      const carbon: MessageContent = { kind: "carbon", to: peerUserId, inner: content };
+      for (const device of others) {
+        await this.sendOlmContent(this.id.userId, device, carbon, `${msgId}-carbon`);
+      }
+    } catch {
+      /* best effort — our other devices will also receive the peer's replies */
+    }
   }
 
   /** Download + decrypt an attachment to a Blob for preview/saving. */
@@ -756,6 +778,18 @@ class Messenger {
       this.callSignalHandler?.(message.fromUserId, content);
       return;
     }
+    if (content.kind === "carbon") {
+      // A copy of something we sent from another of our devices.
+      const convId = content.to;
+      const username =
+        this.state.conversations[convId]?.title ??
+        (await this.resolveUsername(convId));
+      const record = this.contentToRecord(content.inner, convId, message);
+      record.dir = "out";
+      record.sender = undefined;
+      await this.persistAndAppend(convId, "dm", username, record);
+      return;
+    }
     if (content.kind === "text" || content.kind === "attachment") {
       const convId = message.fromUserId;
       const username =
@@ -819,8 +853,11 @@ class Messenger {
 
     await this.ensureGroupKnown(env.groupId);
     const title = this.state.conversations[env.groupId]?.title ?? "group";
-    const sender = await this.resolveUsername(message.fromUserId);
+    // A group message from one of our own devices shows as outgoing.
+    const mine = message.fromUserId === this.state.identity?.userId;
+    const sender = mine ? undefined : await this.resolveUsername(message.fromUserId);
     const record = this.contentToRecord(content, env.groupId, message, sender);
+    record.dir = mine ? "out" : "in";
     await this.persistAndAppend(env.groupId, "group", title, record);
   }
 

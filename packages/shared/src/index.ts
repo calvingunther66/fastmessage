@@ -231,7 +231,10 @@ export type MessageContent =
   | { kind: "call-offer"; callId: string; sdp: string; video: boolean; sentAt: number }
   | { kind: "call-answer"; callId: string; sdp: string }
   | { kind: "call-ice"; callId: string; candidate: string }
-  | { kind: "call-hangup"; callId: string; reason?: string };
+  | { kind: "call-hangup"; callId: string; reason?: string }
+  // Multi-device: a copy of a message we sent, mirrored to our own other
+  // devices so they stay in sync. `to` is the conversation (peer) it belongs to.
+  | { kind: "carbon"; to: string; inner: MessageContent };
 
 // ---------------------------------------------------------------------------
 // REST: send (fallback when WS is down) + mailbox drain
