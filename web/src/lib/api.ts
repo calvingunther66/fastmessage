@@ -84,4 +84,29 @@ export const api = {
       token,
       body: { userId },
     }),
+  async uploadBlob(
+    data: Uint8Array<ArrayBuffer>,
+    token: string,
+  ): Promise<{ blobId: string }> {
+    const res = await fetch(`${API_V1}/blobs`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        authorization: `Bearer ${token}`,
+      },
+      body: data,
+    });
+    if (!res.ok) throw new ApiError(res.status, "upload_failed");
+    return (await res.json()) as { blobId: string };
+  },
+  async downloadBlob(
+    blobId: string,
+    token: string,
+  ): Promise<Uint8Array<ArrayBuffer>> {
+    const res = await fetch(`${API_V1}/blobs/${encodeURIComponent(blobId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new ApiError(res.status, "download_failed");
+    return new Uint8Array(await res.arrayBuffer());
+  },
 };

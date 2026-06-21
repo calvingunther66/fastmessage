@@ -139,13 +139,14 @@ Implemented and verified:
 - ✅ **1:1 end-to-end messaging** over WebSocket with offline store-and-forward
 - ✅ **Group chats** — Megolm group ratchet with room-key distribution over 1:1
   Olm sessions and rotation on membership change (unit-tested + e2e-tested)
+- ✅ **Encrypted attachments** — files are AES-256-GCM encrypted in the browser
+  before upload; the server stores ciphertext blobs and never sees the key
 - ✅ Olm/Megolm client library (unit-tested) + IndexedDB persistence
 - ✅ Installable PWA; Dockerized server that serves it; Cloudflare Tunnel stack
 
 Planned next (scaffolding in place):
 
 - ⏳ **Multi-device** — QR device-linking + fan-out to all of a user's devices
-- ⏳ **Encrypted attachments** — client-side file encryption + ciphertext blob store
 - ⏳ **Web Push** notifications (VAPID)
 - ⏳ **Voice/video calls** — WebRTC with encrypted signaling + coturn
 

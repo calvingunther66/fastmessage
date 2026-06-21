@@ -1,6 +1,7 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "react";
 import { useMessenger } from "../hooks.js";
 import { messenger } from "../lib/messaging.js";
+import { Attachment } from "./Attachment.js";
 
 export function ChatView() {
   const state = useMessenger();
@@ -29,8 +30,13 @@ export function ChatView() {
     e.preventDefault();
     const text = draft;
     setDraft("");
-    if (conv.kind === "group") await messenger.sendGroupText(conv.id, text);
-    else await messenger.sendText(conv.id, text);
+    await messenger.sendText(conv.id, text);
+  };
+
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) await messenger.sendAttachment(conv.id, file);
   };
 
   const subtitle =
@@ -56,7 +62,9 @@ export function ChatView() {
             {m.dir === "in" && conv.kind === "group" && m.sender && (
               <div className="bubble-sender">{m.sender}</div>
             )}
-            <div className="bubble-body">{m.body}</div>
+            <div className="bubble-body">
+              {m.attachment ? <Attachment meta={m.attachment} /> : m.body}
+            </div>
             <div className="bubble-meta">
               {new Date(m.sentAt).toLocaleTimeString([], {
                 hour: "2-digit",
@@ -71,6 +79,10 @@ export function ChatView() {
       </div>
 
       <form className="composer" onSubmit={send}>
+        <label className="attach-btn" title="Attach a file">
+          📎
+          <input type="file" hidden onChange={onFile} />
+        </label>
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

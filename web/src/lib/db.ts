@@ -1,4 +1,5 @@
 import { openDB, type IDBPDatabase } from "idb";
+import type { AttachmentMeta } from "./files.js";
 
 /** Local-only persistence. Private keys (the Olm account + session pickles) and
  * decrypted message history live here, in the browser's origin-isolated store —
@@ -20,6 +21,7 @@ export interface StoredMessageRec {
   body: string;
   sentAt: number;
   sender?: string;
+  attachment?: AttachmentMeta;
   status?: "sending" | "sent" | "failed";
 }
 /** Outbound Megolm session for a group (the sender's ratchet). */

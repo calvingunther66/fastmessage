@@ -7,6 +7,7 @@ import { API_BASE, API_V1 } from "@fastmessage/shared";
 import { config } from "./config.js";
 import "./db.js"; // opens the database and ensures the schema exists
 import { authRoutes } from "./routes/auth.js";
+import { blobRoutes } from "./routes/blobs.js";
 import { groupRoutes } from "./routes/groups.js";
 import { keyRoutes } from "./routes/keys.js";
 import { messageRoutes } from "./routes/messages.js";
@@ -24,6 +25,13 @@ await app.register(cors, {
 });
 await app.register(websocket);
 
+// Accept raw binary uploads (encrypted attachment ciphertext) as a Buffer.
+app.addContentTypeParser(
+  "application/octet-stream",
+  { parseAs: "buffer" },
+  (_req, body, done) => done(null, body),
+);
+
 // All REST endpoints live under /app/v1 — the "backend connector".
 await app.register(
   async (api) => {
@@ -36,6 +44,7 @@ await app.register(
     await keyRoutes(api);
     await messageRoutes(api);
     await groupRoutes(api);
+    await blobRoutes(api);
   },
   { prefix: API_V1 },
 );

@@ -9,6 +9,8 @@
  * server's SQLite file to assert no plaintext is stored anywhere — proving the
  * operator cannot read messages.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import {
   CryptoAccount,
@@ -217,6 +219,49 @@ for (let i = 0; i < 2; i++) {
 }
 if (groupDecrypted !== GROUP_SECRET) throw new Error("group decrypt failed");
 console.log(`✅ group: Bob decrypted "${GROUP_SECRET}"`);
+
+// ---- Encrypted attachment (AES-GCM blob) -------------------------------
+const ATT_SECRET = "attachment-bytes-super-secret-stuff";
+{
+  const data = new TextEncoder().encode(ATT_SECRET);
+  const fileKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, [
+    "encrypt",
+    "decrypt",
+  ]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, fileKey, data),
+  );
+
+  const up = await fetch(`${BASE}${API_V1}/blobs`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/octet-stream",
+      authorization: `Bearer ${alice.auth.token}`,
+    },
+    body: ct,
+  });
+  const { blobId } = (await up.json()) as { blobId: string };
+
+  // Bob downloads the ciphertext and decrypts with the key (as if from a message).
+  const down = await fetch(`${BASE}${API_V1}/blobs/${blobId}`, {
+    headers: { authorization: `Bearer ${bob.auth.token}` },
+  });
+  const ct2 = new Uint8Array(await down.arrayBuffer());
+  const pt = new Uint8Array(
+    await crypto.subtle.decrypt({ name: "AES-GCM", iv }, fileKey, ct2),
+  );
+  if (new TextDecoder().decode(pt) !== ATT_SECRET) {
+    throw new Error("attachment decrypt failed");
+  }
+
+  // The blob on disk must be ciphertext only.
+  const onDisk = readFileSync(join(dirname(DB), "blobs", blobId));
+  if (onDisk.toString("latin1").includes(ATT_SECRET)) {
+    throw new Error("❌ TRUST VIOLATION: attachment plaintext on disk");
+  }
+  console.log(`✅ attachment: round-trip ok, blob on disk is ciphertext only`);
+}
 
 aliceSocket.close();
 bobSocket.close();

@@ -19,6 +19,7 @@ import {
 import { api, ApiError } from "./api.js";
 import { ensureCrypto } from "./crypto-init.js";
 import { storage, type StoredMessageRec } from "./db.js";
+import { decryptToBlob, encryptFile, type AttachmentMeta } from "./files.js";
 
 const INITIAL_ONE_TIME_KEYS = 20;
 const REPLENISH_BATCH = 5;
@@ -40,6 +41,7 @@ export interface ChatMessage {
   body: string;
   sentAt: number;
   sender?: string; // display name of the sender (group messages)
+  attachment?: AttachmentMeta;
   status?: "sending" | "sent" | "failed";
 }
 
@@ -424,8 +426,9 @@ class Messenger {
     return session;
   }
 
-  async sendText(peerUserId: string, text: string): Promise<void> {
-    if (!this.account || !text.trim()) return;
+  async sendText(convId: string, text: string): Promise<void> {
+    const conv = this.state.conversations[convId];
+    if (!conv || !this.account || !text.trim()) return;
     const msgId = crypto.randomUUID();
     const content: MessageContent = {
       kind: "text",
@@ -433,28 +436,95 @@ class Messenger {
       sentAt: Date.now(),
       msgId,
     };
-    const username = this.state.conversations[peerUserId]?.title ?? peerUserId;
     const record: StoredMessageRec = {
       id: msgId,
-      convId: peerUserId,
+      convId,
       dir: "out",
       body: text,
       sentAt: content.sentAt,
       status: "sending",
     };
-    await this.persistAndAppend(peerUserId, "dm", username, record);
+    await this.sendContent(conv, content, record);
+  }
 
+  async sendAttachment(convId: string, file: File): Promise<void> {
+    const conv = this.state.conversations[convId];
+    if (!conv || !this.account) return;
+    const msgId = crypto.randomUUID();
     try {
-      const { devices } = await api.devices(peerUserId, this.id.token);
-      if (devices.length === 0) throw new Error("Recipient has no devices");
-      for (const device of devices) {
-        await this.sendOlmContent(peerUserId, device, content, msgId);
-      }
-      await this.updateMessageStatus(peerUserId, msgId, "sent");
+      const enc = await encryptFile(file);
+      const { blobId } = await api.uploadBlob(enc.ciphertext, this.id.token);
+      const meta: AttachmentMeta = {
+        name: enc.name,
+        mime: enc.mime,
+        size: enc.size,
+        blobId,
+        key: enc.key,
+        iv: enc.iv,
+        hash: enc.hash,
+      };
+      const content: MessageContent = {
+        kind: "attachment",
+        name: meta.name,
+        mime: meta.mime,
+        size: meta.size,
+        blobId,
+        key: meta.key,
+        nonce: meta.iv,
+        hash: meta.hash,
+        sentAt: Date.now(),
+        msgId,
+      };
+      const record: StoredMessageRec = {
+        id: msgId,
+        convId,
+        dir: "out",
+        body: `📎 ${meta.name}`,
+        sentAt: content.sentAt,
+        attachment: meta,
+        status: "sending",
+      };
+      await this.sendContent(conv, content, record);
     } catch (err) {
-      await this.updateMessageStatus(peerUserId, msgId, "failed");
+      this.set({
+        error: err instanceof Error ? err.message : "Attachment failed",
+      });
+    }
+  }
+
+  /** Deliver any MessageContent (text or attachment) to a dm or group. */
+  private async sendContent(
+    conv: Conversation,
+    content: MessageContent,
+    record: StoredMessageRec,
+  ): Promise<void> {
+    await this.persistAndAppend(conv.id, conv.kind, conv.title, record);
+    try {
+      if (conv.kind === "group") await this.sendGroupContent(conv.id, content);
+      else await this.sendDmContent(conv.id, content, record.id);
+      await this.updateMessageStatus(conv.id, record.id, "sent");
+    } catch (err) {
+      await this.updateMessageStatus(conv.id, record.id, "failed");
       this.set({ error: err instanceof Error ? err.message : "Send failed" });
     }
+  }
+
+  private async sendDmContent(
+    peerUserId: string,
+    content: MessageContent,
+    msgId: string,
+  ): Promise<void> {
+    const { devices } = await api.devices(peerUserId, this.id.token);
+    if (devices.length === 0) throw new Error("Recipient has no devices");
+    for (const device of devices) {
+      await this.sendOlmContent(peerUserId, device, content, msgId);
+    }
+  }
+
+  /** Download + decrypt an attachment to a Blob for preview/saving. */
+  async fetchAttachment(meta: AttachmentMeta): Promise<Blob> {
+    const ciphertext = await api.downloadBlob(meta.blobId, this.id.token);
+    return decryptToBlob(ciphertext, meta.key, meta.iv, meta.mime);
   }
 
   /** Encrypt one piece of content to one device over Olm and send it. */
@@ -520,85 +590,64 @@ class Messenger {
     return g;
   }
 
-  async sendGroupText(groupId: string, text: string): Promise<void> {
-    if (!this.account || !text.trim()) return;
-    const msgId = crypto.randomUUID();
-    const content: MessageContent = {
-      kind: "text",
-      body: text,
-      sentAt: Date.now(),
-      msgId,
-    };
-    const title = this.state.conversations[groupId]?.title ?? "group";
-    const record: StoredMessageRec = {
-      id: msgId,
-      convId: groupId,
-      dir: "out",
-      body: text,
-      sentAt: content.sentAt,
-      status: "sending",
-    };
-    await this.persistAndAppend(groupId, "group", title, record);
+  private async sendGroupContent(
+    groupId: string,
+    content: MessageContent,
+  ): Promise<void> {
+    const msgId = "msgId" in content ? content.msgId : crypto.randomUUID();
+    const group = await api.getGroup(groupId, this.id.token);
+    const memberSig = group.members
+      .map((m) => m.userId)
+      .sort()
+      .join(",");
+    const g = await this.ensureGroupSession(groupId, memberSig);
 
-    try {
-      const group = await api.getGroup(groupId, this.id.token);
-      const memberSig = group.members
-        .map((m) => m.userId)
-        .sort()
-        .join(",");
-      const g = await this.ensureGroupSession(groupId, memberSig);
-
-      // Gather every member device except our own current device.
-      const targets: Array<{ userId: string; deviceId: string; identityKey: string }> =
-        [];
-      for (const m of group.members) {
-        const { devices } = await api.devices(m.userId, this.id.token);
-        for (const d of devices) {
-          if (d.identityKey === this.myIdentityKey) continue;
-          targets.push({ userId: m.userId, deviceId: d.deviceId, identityKey: d.identityKey });
-        }
+    // Gather every member device except our own current device.
+    const targets: Array<{ userId: string; deviceId: string; identityKey: string }> =
+      [];
+    for (const m of group.members) {
+      const { devices } = await api.devices(m.userId, this.id.token);
+      for (const d of devices) {
+        if (d.identityKey === this.myIdentityKey) continue;
+        targets.push({ userId: m.userId, deviceId: d.deviceId, identityKey: d.identityKey });
       }
+    }
 
-      // Distribute the group key to any device that doesn't have it yet.
-      for (const t of targets) {
-        if (g.deliveredTo.has(t.identityKey)) continue;
-        const roomKey: MessageContent = {
-          kind: "room-key",
-          groupId,
-          sessionId: g.sessionId,
-          sessionKey: g.session.sessionKey(),
-        };
-        await this.sendOlmContent(t.userId, t, roomKey, `${msgId}-key`);
-        g.deliveredTo.add(t.identityKey);
-      }
-
-      // Encrypt the message once with Megolm and fan it out to all devices.
-      const ciphertext = g.session.encrypt(JSON.stringify(content));
-      const envelope: MegolmEnvelope = {
-        v: 1,
-        alg: "megolm",
-        body: ciphertext,
-        senderIdentityKey: this.myIdentityKey,
+    // Distribute the group key to any device that doesn't have it yet.
+    for (const t of targets) {
+      if (g.deliveredTo.has(t.identityKey)) continue;
+      const roomKey: MessageContent = {
+        kind: "room-key",
         groupId,
         sessionId: g.sessionId,
+        sessionKey: g.session.sessionKey(),
       };
-      for (const t of targets) {
-        this.sendFrame({
-          t: "send",
-          message: {
-            toUserId: t.userId,
-            toDeviceId: t.deviceId,
-            clientMsgId: `${msgId}:${t.deviceId}`,
-            envelope,
-          },
-        });
-      }
-      await this.saveGroupOut(groupId, g);
-      await this.updateMessageStatus(groupId, msgId, "sent");
-    } catch (err) {
-      await this.updateMessageStatus(groupId, msgId, "failed");
-      this.set({ error: err instanceof Error ? err.message : "Send failed" });
+      await this.sendOlmContent(t.userId, t, roomKey, `${msgId}-key`);
+      g.deliveredTo.add(t.identityKey);
     }
+
+    // Encrypt the message once with Megolm and fan it out to all devices.
+    const ciphertext = g.session.encrypt(JSON.stringify(content));
+    const envelope: MegolmEnvelope = {
+      v: 1,
+      alg: "megolm",
+      body: ciphertext,
+      senderIdentityKey: this.myIdentityKey,
+      groupId,
+      sessionId: g.sessionId,
+    };
+    for (const t of targets) {
+      this.sendFrame({
+        t: "send",
+        message: {
+          toUserId: t.userId,
+          toDeviceId: t.deviceId,
+          clientMsgId: `${msgId}:${t.deviceId}`,
+          envelope,
+        },
+      });
+    }
+    await this.saveGroupOut(groupId, g);
   }
 
   // ---- receiving ---------------------------------------------------------
@@ -670,20 +719,51 @@ class Messenger {
       await this.flushPendingGroup(content.sessionId);
       return;
     }
-    if (content.kind === "text") {
+    if (content.kind === "text" || content.kind === "attachment") {
       const convId = message.fromUserId;
       const username =
         this.state.conversations[convId]?.title ??
         (await this.resolveUsername(convId));
-      const record: StoredMessageRec = {
-        id: content.msgId || message.id,
-        convId,
-        dir: "in",
-        body: content.body,
-        sentAt: content.sentAt || message.sentAt,
-      };
+      const record = this.contentToRecord(content, convId, message);
       await this.persistAndAppend(convId, "dm", username, record);
     }
+  }
+
+  /** Map a decrypted text/attachment content to a stored message record. */
+  private contentToRecord(
+    content: MessageContent,
+    convId: string,
+    message: StoredMessage,
+    sender?: string,
+  ): StoredMessageRec {
+    const base = {
+      convId,
+      dir: "in" as const,
+      sentAt: ("sentAt" in content && content.sentAt) || message.sentAt,
+      sender,
+    };
+    if (content.kind === "attachment") {
+      return {
+        ...base,
+        id: content.msgId || message.id,
+        body: `📎 ${content.name}`,
+        attachment: {
+          name: content.name,
+          mime: content.mime,
+          size: content.size,
+          blobId: content.blobId,
+          key: content.key,
+          iv: content.nonce,
+          hash: content.hash,
+        },
+      };
+    }
+    // text
+    return {
+      ...base,
+      id: (content.kind === "text" && content.msgId) || message.id,
+      body: content.kind === "text" ? content.body : "",
+    };
   }
 
   private async handleGroupMessage(message: StoredMessage, env: MegolmEnvelope) {
@@ -698,19 +778,12 @@ class Messenger {
     }
     const { plaintext } = session.decrypt(env.body);
     const content = JSON.parse(plaintext) as MessageContent;
-    if (content.kind !== "text") return;
+    if (content.kind !== "text" && content.kind !== "attachment") return;
 
     await this.ensureGroupKnown(env.groupId);
     const title = this.state.conversations[env.groupId]?.title ?? "group";
     const sender = await this.resolveUsername(message.fromUserId);
-    const record: StoredMessageRec = {
-      id: content.msgId || message.id,
-      convId: env.groupId,
-      dir: "in",
-      body: content.body,
-      sentAt: content.sentAt || message.sentAt,
-      sender,
-    };
+    const record = this.contentToRecord(content, env.groupId, message, sender);
     await this.persistAndAppend(env.groupId, "group", title, record);
   }
 
