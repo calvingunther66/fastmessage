@@ -5,18 +5,33 @@ import { messenger } from "../lib/messaging.js";
 export function Sidebar() {
   const state = useMessenger();
   const [newChat, setNewChat] = useState("");
+  const [showGroup, setShowGroup] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [groupMembers, setGroupMembers] = useState("");
+
   const conversations = Object.values(state.conversations).sort((a, b) => {
     const la = a.messages.at(-1)?.sentAt ?? 0;
     const lb = b.messages.at(-1)?.sentAt ?? 0;
     return lb - la;
   });
 
-  const start = async (e: FormEvent) => {
+  const startChat = async (e: FormEvent) => {
     e.preventDefault();
     const name = newChat.trim();
     if (!name) return;
-    const peer = await messenger.startConversation(name);
-    if (peer) setNewChat("");
+    if (await messenger.startConversation(name)) setNewChat("");
+  };
+
+  const createGroup = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!groupName.trim()) return;
+    await messenger.createGroup(
+      groupName.trim(),
+      groupMembers.split(",").map((s) => s.trim()).filter(Boolean),
+    );
+    setGroupName("");
+    setGroupMembers("");
+    setShowGroup(false);
   };
 
   return (
@@ -33,15 +48,39 @@ export function Sidebar() {
         </button>
       </header>
 
-      <form className="new-chat" onSubmit={start}>
+      <form className="new-chat" onSubmit={startChat}>
         <input
           value={newChat}
           onChange={(e) => setNewChat(e.target.value)}
           placeholder="Start chat with username…"
           autoCapitalize="none"
         />
-        <button type="submit">+</button>
+        <button type="submit" title="Start direct chat">
+          +
+        </button>
       </form>
+
+      <div className="new-group-toggle">
+        <button className="link" type="button" onClick={() => setShowGroup((v) => !v)}>
+          {showGroup ? "Cancel" : "+ New group"}
+        </button>
+      </div>
+      {showGroup && (
+        <form className="new-group" onSubmit={createGroup}>
+          <input
+            value={groupName}
+            onChange={(e) => setGroupName(e.target.value)}
+            placeholder="Group name"
+          />
+          <input
+            value={groupMembers}
+            onChange={(e) => setGroupMembers(e.target.value)}
+            placeholder="members: alice, bob"
+            autoCapitalize="none"
+          />
+          <button type="submit">Create group</button>
+        </form>
+      )}
 
       <nav className="conversations">
         {conversations.length === 0 && (
@@ -51,16 +90,17 @@ export function Sidebar() {
           const last = c.messages.at(-1);
           return (
             <button
-              key={c.peerUserId}
+              key={c.id}
               className={
-                state.activePeer === c.peerUserId
-                  ? "conversation active"
-                  : "conversation"
+                state.activeConvId === c.id ? "conversation active" : "conversation"
               }
-              onClick={() => messenger.setActivePeer(c.peerUserId)}
+              onClick={() => messenger.setActiveConv(c.id)}
               type="button"
             >
-              <span className="conv-name">{c.username}</span>
+              <span className="conv-name">
+                {c.kind === "group" ? "👥 " : ""}
+                {c.title}
+              </span>
               <span className="conv-preview">
                 {last ? `${last.dir === "out" ? "You: " : ""}${last.body}` : "…"}
               </span>

@@ -9,8 +9,9 @@ export interface StoredSessions {
   pickles: string[];
 }
 export interface StoredConversation {
-  peerUserId: string;
-  username: string;
+  id: string;
+  kind: "dm" | "group";
+  title: string;
 }
 export interface StoredMessageRec {
   id: string;
@@ -18,19 +19,44 @@ export interface StoredMessageRec {
   dir: "in" | "out";
   body: string;
   sentAt: number;
+  sender?: string;
   status?: "sending" | "sent" | "failed";
+}
+/** Outbound Megolm session for a group (the sender's ratchet). */
+export interface StoredGroupOut {
+  groupId: string;
+  sessionId: string;
+  pickle: string;
+  deliveredTo: string[]; // device identity keys that already have the key
+  memberSig: string; // signature of the member set, for rotation
+}
+/** Inbound Megolm session (a member's view of someone's group ratchet). */
+export interface StoredGroupIn {
+  sessionId: string;
+  groupId: string;
+  pickle: string;
 }
 
 let dbp: Promise<IDBPDatabase> | null = null;
 function database(): Promise<IDBPDatabase> {
   if (!dbp) {
-    dbp = openDB("fastmessage", 1, {
+    dbp = openDB("fastmessage", 2, {
       upgrade(db) {
-        db.createObjectStore("kv");
-        db.createObjectStore("sessions", { keyPath: "identityKey" });
-        db.createObjectStore("conversations", { keyPath: "peerUserId" });
-        const m = db.createObjectStore("messages", { keyPath: "id" });
-        m.createIndex("convId", "convId");
+        if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
+        if (!db.objectStoreNames.contains("sessions"))
+          db.createObjectStore("sessions", { keyPath: "identityKey" });
+        // Conversation key changed from peerUserId -> id (dm or group).
+        if (db.objectStoreNames.contains("conversations"))
+          db.deleteObjectStore("conversations");
+        db.createObjectStore("conversations", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("messages")) {
+          const m = db.createObjectStore("messages", { keyPath: "id" });
+          m.createIndex("convId", "convId");
+        }
+        if (!db.objectStoreNames.contains("groupOut"))
+          db.createObjectStore("groupOut", { keyPath: "groupId" });
+        if (!db.objectStoreNames.contains("groupIn"))
+          db.createObjectStore("groupIn", { keyPath: "sessionId" });
       },
     });
   }
@@ -75,10 +101,27 @@ export const storage = {
     ) as Promise<StoredMessageRec[]>;
   },
 
+  async putGroupOut(g: StoredGroupOut): Promise<void> {
+    await (await database()).put("groupOut", g);
+  },
+  async getGroupOut(groupId: string): Promise<StoredGroupOut | undefined> {
+    return (await database()).get("groupOut", groupId) as Promise<
+      StoredGroupOut | undefined
+    >;
+  },
+  async putGroupIn(g: StoredGroupIn): Promise<void> {
+    await (await database()).put("groupIn", g);
+  },
+  async allGroupIn(): Promise<StoredGroupIn[]> {
+    return (await database()).getAll("groupIn") as Promise<StoredGroupIn[]>;
+  },
+
   async clearAll(): Promise<void> {
     const db = await database();
     await Promise.all(
-      ["kv", "sessions", "conversations", "messages"].map((s) => db.clear(s)),
+      ["kv", "sessions", "conversations", "messages", "groupOut", "groupIn"].map(
+        (s) => db.clear(s),
+      ),
     );
   },
 };

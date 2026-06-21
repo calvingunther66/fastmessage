@@ -2,7 +2,10 @@ import {
   API_V1,
   type AuthResponse,
   type ClaimResponse,
+  type CreateGroupRequest,
   type DeviceListResponse,
+  type GroupInfo,
+  type GroupListResponse,
   type LoginRequest,
   type RegisterRequest,
   type ReplenishRequest,
@@ -69,5 +72,16 @@ export const api = {
       method: "POST",
       token,
       body,
+    }),
+  createGroup: (body: CreateGroupRequest, token: string) =>
+    req<GroupInfo>("/groups", { method: "POST", token, body }),
+  listGroups: (token: string) => req<GroupListResponse>("/groups", { token }),
+  getGroup: (groupId: string, token: string) =>
+    req<GroupInfo>(`/groups/${encodeURIComponent(groupId)}`, { token }),
+  addMember: (groupId: string, userId: string, token: string) =>
+    req<GroupInfo>(`/groups/${encodeURIComponent(groupId)}/members`, {
+      method: "POST",
+      token,
+      body: { userId },
     }),
 };

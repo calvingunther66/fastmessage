@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import type {
   DevicePublicKeys,
   EncryptedEnvelope,
+  GroupInfo,
+  GroupMember,
+  GroupRole,
   OneTimeKey,
   StoredMessage,
 } from "@fastmessage/shared";
@@ -297,5 +300,97 @@ export const messages = {
       for (const id of ids) deleteMessageStmt.run(id, userId, deviceId);
     });
     tx();
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Groups (membership metadata only)
+// ---------------------------------------------------------------------------
+
+interface GroupRow {
+  id: string;
+  name: string;
+  created_by: string;
+  created_at: number;
+}
+
+const insertGroup = db.prepare(
+  `INSERT INTO groups (id, name, created_by, created_at) VALUES (?, ?, ?, ?)`,
+);
+const selectGroup = db.prepare(`SELECT * FROM groups WHERE id = ?`);
+const insertMember = db.prepare(
+  `INSERT OR IGNORE INTO group_members (group_id, user_id, role, added_at)
+   VALUES (?, ?, ?, ?)`,
+);
+const deleteMember = db.prepare(
+  `DELETE FROM group_members WHERE group_id = ? AND user_id = ?`,
+);
+const selectMembers = db.prepare(
+  `SELECT gm.user_id, gm.role, u.username
+   FROM group_members gm JOIN users u ON u.id = gm.user_id
+   WHERE gm.group_id = ? ORDER BY gm.added_at`,
+);
+const selectGroupsForUser = db.prepare(
+  `SELECT g.* FROM groups g
+   JOIN group_members gm ON gm.group_id = g.id
+   WHERE gm.user_id = ? ORDER BY g.created_at`,
+);
+const selectIsMember = db.prepare(
+  `SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?`,
+);
+
+function membersOf(groupId: string): GroupMember[] {
+  return (
+    selectMembers.all(groupId) as Array<{
+      user_id: string;
+      role: string;
+      username: string;
+    }>
+  ).map((r) => ({
+    userId: r.user_id,
+    username: r.username,
+    role: r.role as GroupRole,
+  }));
+}
+
+function toGroupInfo(row: GroupRow): GroupInfo {
+  return {
+    groupId: row.id,
+    name: row.name,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    members: membersOf(row.id),
+  };
+}
+
+export const groups = {
+  create(name: string, createdBy: string): GroupInfo {
+    const id = randomUUID();
+    const now = Date.now();
+    const tx = db.transaction(() => {
+      insertGroup.run(id, name, createdBy, now);
+      insertMember.run(id, createdBy, "admin", now);
+    });
+    tx();
+    return toGroupInfo(selectGroup.get(id) as GroupRow);
+  },
+  get(groupId: string): GroupInfo | undefined {
+    const row = selectGroup.get(groupId) as GroupRow | undefined;
+    return row ? toGroupInfo(row) : undefined;
+  },
+  addMember(groupId: string, userId: string, role: GroupRole = "member") {
+    insertMember.run(groupId, userId, role, Date.now());
+  },
+  removeMember(groupId: string, userId: string) {
+    deleteMember.run(groupId, userId);
+  },
+  isMember(groupId: string, userId: string): boolean {
+    return selectIsMember.get(groupId, userId) !== undefined;
+  },
+  listForUser(userId: string): GroupInfo[] {
+    return (selectGroupsForUser.all(userId) as GroupRow[]).map(toGroupInfo);
+  },
+  members(groupId: string): GroupMember[] {
+    return membersOf(groupId);
   },
 };

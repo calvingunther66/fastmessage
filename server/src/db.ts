@@ -78,4 +78,25 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_recipient
   ON messages (to_user_id, to_device_id, created_at);
+
+-- Group membership is metadata only. Group message *content* is end-to-end
+-- encrypted with Megolm and flows through the same ciphertext mailbox above.
+CREATE TABLE IF NOT EXISTS groups (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+  group_id TEXT NOT NULL,
+  user_id  TEXT NOT NULL,
+  role     TEXT NOT NULL DEFAULT 'member',
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (group_id, user_id),
+  FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members (user_id);
 `);

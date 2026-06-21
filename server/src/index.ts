@@ -7,6 +7,7 @@ import { API_BASE, API_V1 } from "@fastmessage/shared";
 import { config } from "./config.js";
 import "./db.js"; // opens the database and ensures the schema exists
 import { authRoutes } from "./routes/auth.js";
+import { groupRoutes } from "./routes/groups.js";
 import { keyRoutes } from "./routes/keys.js";
 import { messageRoutes } from "./routes/messages.js";
 import { registerWebSocket } from "./ws.js";
@@ -34,6 +35,7 @@ await app.register(
     await authRoutes(api);
     await keyRoutes(api);
     await messageRoutes(api);
+    await groupRoutes(api);
   },
   { prefix: API_V1 },
 );

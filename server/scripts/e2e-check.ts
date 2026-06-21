@@ -5,18 +5,23 @@
  *   BASE=http://127.0.0.1:8099 DB=/tmp/fmtest/fastmessage.sqlite \
  *     pnpm --filter @fastmessage/server exec tsx scripts/e2e-check.ts
  *
- * It registers two users, has Alice send Bob an E2E-encrypted message over the
- * WebSocket, confirms Bob decrypts it, and then opens the server's SQLite file
- * directly to assert the stored envelope contains ONLY ciphertext — proving the
- * server operator cannot read messages.
+ * Covers a 1:1 Olm exchange and a group Megolm exchange, then opens the
+ * server's SQLite file to assert no plaintext is stored anywhere — proving the
+ * operator cannot read messages.
  */
 import Database from "better-sqlite3";
-import { CryptoAccount, initCrypto } from "@fastmessage/crypto";
+import {
+  CryptoAccount,
+  GroupInboundSession,
+  GroupSession,
+  initCrypto,
+} from "@fastmessage/crypto";
 import { API_V1, WS_PATH } from "@fastmessage/shared";
 
 const BASE = process.env.BASE ?? "http://127.0.0.1:8099";
 const DB = process.env.DB ?? "/tmp/fmtest/fastmessage.sqlite";
-const SECRET = "super-secret-hello-do-not-leak-42";
+const DM_SECRET = "super-secret-dm-do-not-leak-42";
+const GROUP_SECRET = "super-secret-group-do-not-leak-99";
 
 await initCrypto();
 
@@ -54,9 +59,18 @@ async function register(username: string): Promise<Registered> {
   return { acct, deviceId, auth };
 }
 
-function authHeaders(token: string) {
-  return { authorization: `Bearer ${token}`, "content-type": "application/json" };
-}
+const H = (token: string) => ({
+  authorization: `Bearer ${token}`,
+  "content-type": "application/json",
+});
+const get = async <T>(path: string, token: string): Promise<T> =>
+  (await fetch(`${BASE}${API_V1}${path}`, { headers: H(token) })).json() as Promise<T>;
+const post = async <T>(path: string, token: string, body: unknown): Promise<T> =>
+  (await fetch(`${BASE}${API_V1}${path}`, {
+    method: "POST",
+    headers: H(token),
+    body: JSON.stringify(body),
+  })).json() as Promise<T>;
 
 function openSocket(token: string): Promise<WebSocket> {
   const url = `${BASE.replace(/^http/, "ws")}${WS_PATH}?token=${token}`;
@@ -67,100 +81,159 @@ function openSocket(token: string): Promise<WebSocket> {
   });
 }
 
+// A queue so we can await individual delivered messages in order.
+function messageQueue(ws: WebSocket) {
+  const buffer: any[] = [];
+  const waiters: Array<(m: any) => void> = [];
+  ws.onmessage = (ev) => {
+    const frame = JSON.parse(String(ev.data));
+    if (frame.t !== "message") return;
+    const w = waiters.shift();
+    if (w) w(frame.message);
+    else buffer.push(frame.message);
+  };
+  return (timeoutMs = 8000): Promise<any> => {
+    const queued = buffer.shift();
+    if (queued) return Promise.resolve(queued);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out")), timeoutMs);
+      waiters.push((m) => {
+        clearTimeout(timer);
+        resolve(m);
+      });
+    });
+  };
+}
+
 const alice = await register("alice");
 const bob = await register("bob");
+const aliceSocket = await openSocket(alice.auth.token);
+const bobSocket = await openSocket(bob.auth.token);
+const nextForBob = messageQueue(bobSocket);
 
-// Alice resolves Bob and claims a prekey bundle for his device.
-const lookup = (await (
-  await fetch(`${BASE}${API_V1}/users/lookup?username=bob`, {
-    headers: authHeaders(alice.auth.token),
-  })
-).json()) as { userId: string };
-
-const claim = (await (
-  await fetch(`${BASE}${API_V1}/keys/claim`, {
-    method: "POST",
-    headers: authHeaders(alice.auth.token),
-    body: JSON.stringify({
-      targets: [{ userId: lookup.userId, deviceId: bob.deviceId }],
+const send = (to: Registered, envelope: unknown) =>
+  aliceSocket.send(
+    JSON.stringify({
+      t: "send",
+      message: {
+        toUserId: to.auth.userId,
+        toDeviceId: to.deviceId,
+        clientMsgId: crypto.randomUUID(),
+        envelope,
+      },
     }),
-  })
-).json()) as { bundles: Array<{ identityKey: string; oneTimeKey: { key: string } }> };
+  );
 
+const senderKey = alice.acct.identityKeys().curve25519;
+
+// ---- 1:1 Olm ------------------------------------------------------------
+const claim = await post<{
+  bundles: Array<{ identityKey: string; oneTimeKey: { key: string } }>;
+}>("/keys/claim", alice.auth.token, {
+  targets: [{ userId: bob.auth.userId, deviceId: bob.deviceId }],
+});
 const bundle = claim.bundles[0];
-if (!bundle?.oneTimeKey) throw new Error("no prekey bundle returned");
+if (!bundle?.oneTimeKey) throw new Error("no prekey bundle");
 
-// Alice encrypts a message to Bob's device.
-const session = alice.acct.createOutboundSession(
+const aliceToBob = alice.acct.createOutboundSession(
   bundle.identityKey,
   bundle.oneTimeKey.key,
 );
-const content = {
-  kind: "text",
-  body: SECRET,
-  sentAt: Date.now(),
-  msgId: crypto.randomUUID(),
-};
-const enc = session.encrypt(JSON.stringify(content));
-const envelope = {
-  v: 1 as const,
-  alg: "olm" as const,
-  msgType: enc.msgType,
-  body: enc.body,
-  senderIdentityKey: alice.acct.identityKeys().curve25519,
-};
-
-// Bob connects and waits for the message.
-const bobSocket = await openSocket(bob.auth.token);
-const received = new Promise<{ envelope: typeof envelope }>((resolve, reject) => {
-  bobSocket.onmessage = (ev) => {
-    const frame = JSON.parse(String(ev.data));
-    if (frame.t === "message") resolve(frame.message);
-  };
-  setTimeout(() => reject(new Error("timed out waiting for message")), 8000);
+const dmEnc = aliceToBob.encrypt(
+  JSON.stringify({ kind: "text", body: DM_SECRET, sentAt: Date.now(), msgId: "1" }),
+);
+send(bob, {
+  v: 1,
+  alg: "olm",
+  msgType: dmEnc.msgType,
+  body: dmEnc.body,
+  senderIdentityKey: senderKey,
 });
 
-// Alice sends over the WebSocket.
-const aliceSocket = await openSocket(alice.auth.token);
-aliceSocket.send(
+const dm = await nextForBob();
+const bobInboundResult = bob.acct.createInboundSession(
+  dm.envelope.senderIdentityKey,
+  dm.envelope.body,
+);
+const bobInbound = bobInboundResult.session;
+if (JSON.parse(bobInboundResult.plaintext).body !== DM_SECRET) {
+  throw new Error("dm decrypt failed");
+}
+console.log(`✅ 1:1: Bob decrypted "${DM_SECRET}"`);
+
+// ---- Group Megolm -------------------------------------------------------
+const group = await post<{ groupId: string }>("/groups", alice.auth.token, {
+  name: "secret club",
+  memberUserIds: [bob.auth.userId],
+});
+
+const groupSession = GroupSession.create();
+// Distribute the room key over the existing 1:1 Olm session (key at index 0).
+const keyMsg = aliceToBob.encrypt(
   JSON.stringify({
-    t: "send",
-    message: {
-      toUserId: lookup.userId,
-      toDeviceId: bob.deviceId,
-      clientMsgId: crypto.randomUUID(),
-      envelope,
-    },
+    kind: "room-key",
+    groupId: group.groupId,
+    sessionId: groupSession.sessionId(),
+    sessionKey: groupSession.sessionKey(),
   }),
 );
+send(bob, {
+  v: 1,
+  alg: "olm",
+  msgType: keyMsg.msgType,
+  body: keyMsg.body,
+  senderIdentityKey: senderKey,
+});
 
-const message = await received;
-
-// Bob decrypts.
-const { plaintext } = bob.acct.createInboundSession(
-  message.envelope.senderIdentityKey,
-  message.envelope.body,
+// Encrypt the group message with Megolm and send it.
+const groupCt = groupSession.encrypt(
+  JSON.stringify({ kind: "text", body: GROUP_SECRET, sentAt: Date.now(), msgId: "g1" }),
 );
-const decoded = JSON.parse(plaintext) as { body: string };
-if (decoded.body !== SECRET) {
-  throw new Error(`decrypt mismatch: got ${plaintext}`);
+send(bob, {
+  v: 1,
+  alg: "megolm",
+  body: groupCt,
+  senderIdentityKey: senderKey,
+  groupId: group.groupId,
+  sessionId: groupSession.sessionId(),
+});
+
+// Bob processes the two deliveries (room key, then the group message).
+let inbound: GroupInboundSession | null = null;
+let groupDecrypted: string | null = null;
+for (let i = 0; i < 2; i++) {
+  const m = await nextForBob();
+  if (m.envelope.alg === "olm") {
+    const content = JSON.parse(
+      bobInbound.decrypt(m.envelope.msgType, m.envelope.body),
+    );
+    if (content.kind === "room-key") {
+      inbound = GroupInboundSession.create(content.sessionKey);
+    }
+  } else if (m.envelope.alg === "megolm") {
+    if (!inbound) throw new Error("group message arrived before room key");
+    groupDecrypted = JSON.parse(inbound.decrypt(m.envelope.body).plaintext).body;
+  }
 }
-console.log(`✅ Bob decrypted Alice's message: "${decoded.body}"`);
+if (groupDecrypted !== GROUP_SECRET) throw new Error("group decrypt failed");
+console.log(`✅ group: Bob decrypted "${GROUP_SECRET}"`);
 
-// Trust-model assertion: the plaintext must NOT appear anywhere in the DB.
-bobSocket.close();
 aliceSocket.close();
+bobSocket.close();
 
+// ---- Trust-model assertion ---------------------------------------------
 const sqlite = new Database(DB, { readonly: true });
-const rows = sqlite.prepare("SELECT envelope FROM messages").all() as Array<{ envelope: string }>;
-if (rows.length === 0) throw new Error("expected a stored ciphertext envelope");
+const rows = sqlite.prepare("SELECT envelope FROM messages").all() as Array<{
+  envelope: string;
+}>;
+if (rows.length === 0) throw new Error("expected stored ciphertext envelopes");
 for (const row of rows) {
-  if (row.envelope.includes(SECRET)) {
+  if (row.envelope.includes(DM_SECRET) || row.envelope.includes(GROUP_SECRET)) {
     throw new Error("❌ TRUST VIOLATION: plaintext found in server DB");
   }
 }
 console.log(
-  `✅ Server stored ${rows.length} envelope(s), none containing the plaintext.`,
+  `✅ Server stored ${rows.length} envelope(s), none containing any plaintext.`,
 );
 console.log("✅ All end-to-end checks passed.");
 process.exit(0);

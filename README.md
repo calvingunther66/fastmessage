@@ -137,13 +137,14 @@ Implemented and verified:
 - ✅ Accounts, devices, opaque-token auth (Argon2id password hashing)
 - ✅ Public prekey directory (claim / replenish, fallback keys)
 - ✅ **1:1 end-to-end messaging** over WebSocket with offline store-and-forward
-- ✅ Olm Double Ratchet client library (unit-tested) + IndexedDB persistence
+- ✅ **Group chats** — Megolm group ratchet with room-key distribution over 1:1
+  Olm sessions and rotation on membership change (unit-tested + e2e-tested)
+- ✅ Olm/Megolm client library (unit-tested) + IndexedDB persistence
 - ✅ Installable PWA; Dockerized server that serves it; Cloudflare Tunnel stack
 
 Planned next (scaffolding in place):
 
 - ⏳ **Multi-device** — QR device-linking + fan-out to all of a user's devices
-- ⏳ **Group chats** — Megolm group ratchet (the crypto facade already exposes it)
 - ⏳ **Encrypted attachments** — client-side file encryption + ciphertext blob store
 - ⏳ **Web Push** notifications (VAPID)
 - ⏳ **Voice/video calls** — WebRTC with encrypted signaling + coturn

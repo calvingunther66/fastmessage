@@ -10,7 +10,13 @@
  * will layer Megolm on top using the same accounts; the facade already exposes
  * the group-session classes.
  */
-import { Olm, type OlmAccount, type OlmSession } from "./olm-facade.js";
+import {
+  Olm,
+  type OlmAccount,
+  type OlmInboundGroupSession,
+  type OlmOutboundGroupSession,
+  type OlmSession,
+} from "./olm-facade.js";
 import type { OneTimeKey } from "@fastmessage/shared";
 
 export type { OneTimeKey } from "@fastmessage/shared";
@@ -161,6 +167,80 @@ export class CryptoSession {
     return this.s.decrypt(msgType, body);
   }
 
+  free(): void {
+    this.s.free();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Megolm group ratchet (group chats)
+//
+// The sender keeps ONE outbound group session per group and encrypts every
+// message with it. The session key is distributed to each member device over a
+// 1:1 Olm session (a "room-key" control message). Each recipient imports it as
+// an inbound group session to decrypt. Rotate (make a new outbound session) on
+// membership change so removed members can't read future messages.
+// ---------------------------------------------------------------------------
+
+/** Outbound Megolm session — the sender's group ratchet. */
+export class GroupSession {
+  constructor(private readonly s: OlmOutboundGroupSession) {}
+
+  static create(): GroupSession {
+    const s = new Olm.OutboundGroupSession();
+    s.create();
+    return new GroupSession(s);
+  }
+  static unpickle(pickleKey: string, pickled: string): GroupSession {
+    const s = new Olm.OutboundGroupSession();
+    s.unpickle(pickleKey, pickled);
+    return new GroupSession(s);
+  }
+  pickle(pickleKey: string): string {
+    return this.s.pickle(pickleKey);
+  }
+  sessionId(): string {
+    return this.s.session_id();
+  }
+  /** The secret key to hand to members (only ever over a 1:1 Olm session). */
+  sessionKey(): string {
+    return this.s.session_key();
+  }
+  messageIndex(): number {
+    return this.s.message_index();
+  }
+  encrypt(plaintext: string): string {
+    return this.s.encrypt(plaintext);
+  }
+  free(): void {
+    this.s.free();
+  }
+}
+
+/** Inbound Megolm session — a recipient's view of someone's group ratchet. */
+export class GroupInboundSession {
+  constructor(private readonly s: OlmInboundGroupSession) {}
+
+  static create(sessionKey: string): GroupInboundSession {
+    const s = new Olm.InboundGroupSession();
+    s.create(sessionKey);
+    return new GroupInboundSession(s);
+  }
+  static unpickle(pickleKey: string, pickled: string): GroupInboundSession {
+    const s = new Olm.InboundGroupSession();
+    s.unpickle(pickleKey, pickled);
+    return new GroupInboundSession(s);
+  }
+  pickle(pickleKey: string): string {
+    return this.s.pickle(pickleKey);
+  }
+  sessionId(): string {
+    return this.s.session_id();
+  }
+  decrypt(message: string): { plaintext: string; messageIndex: number } {
+    const r = this.s.decrypt(message);
+    return { plaintext: r.plaintext, messageIndex: r.message_index };
+  }
   free(): void {
     this.s.free();
   }

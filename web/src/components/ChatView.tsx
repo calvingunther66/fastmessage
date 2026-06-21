@@ -6,8 +6,8 @@ export function ChatView() {
   const state = useMessenger();
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
-  const conv = state.activePeer
-    ? state.conversations[state.activePeer]
+  const conv = state.activeConvId
+    ? state.conversations[state.activeConvId]
     : undefined;
 
   useEffect(() => {
@@ -29,21 +29,33 @@ export function ChatView() {
     e.preventDefault();
     const text = draft;
     setDraft("");
-    await messenger.sendText(conv.peerUserId, text);
+    if (conv.kind === "group") await messenger.sendGroupText(conv.id, text);
+    else await messenger.sendText(conv.id, text);
   };
+
+  const subtitle =
+    conv.kind === "group"
+      ? `${conv.members?.length ?? "?"} members · 🔒 encrypted`
+      : "🔒 encrypted";
 
   return (
     <main className="chat">
       <header className="chat-head">
-        <strong>{conv.username}</strong>
-        <span className="lock" title="End-to-end encrypted">
-          🔒 encrypted
-        </span>
+        <div className="chat-title">
+          <strong>
+            {conv.kind === "group" ? "👥 " : ""}
+            {conv.title}
+          </strong>
+          <span className="chat-sub">{subtitle}</span>
+        </div>
       </header>
 
       <div className="messages">
         {conv.messages.map((m) => (
           <div key={m.id} className={`bubble ${m.dir}`}>
+            {m.dir === "in" && conv.kind === "group" && m.sender && (
+              <div className="bubble-sender">{m.sender}</div>
+            )}
             <div className="bubble-body">{m.body}</div>
             <div className="bubble-meta">
               {new Date(m.sentAt).toLocaleTimeString([], {
@@ -62,7 +74,7 @@ export function ChatView() {
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={`Message ${conv.username}…`}
+          placeholder={`Message ${conv.title}…`}
         />
         <button type="submit" disabled={!draft.trim()}>
           Send

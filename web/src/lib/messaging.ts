@@ -1,22 +1,24 @@
 import {
   CryptoAccount,
   CryptoSession,
+  GroupInboundSession,
+  GroupSession,
   randomPickleKey,
   type IdentityKeys,
 } from "@fastmessage/crypto";
 import {
   type EncryptedEnvelope,
+  type GroupInfo,
+  type GroupMember,
+  type MegolmEnvelope,
   type MessageContent,
   type ServerFrame,
+  type StoredMessage,
   WS_PATH,
 } from "@fastmessage/shared";
 import { api, ApiError } from "./api.js";
 import { ensureCrypto } from "./crypto-init.js";
-import {
-  storage,
-  type StoredConversation,
-  type StoredMessageRec,
-} from "./db.js";
+import { storage, type StoredMessageRec } from "./db.js";
 
 const INITIAL_ONE_TIME_KEYS = 20;
 const REPLENISH_BATCH = 5;
@@ -29,19 +31,24 @@ export interface Identity {
   expiresAt: number;
 }
 
+export type ConversationKind = "dm" | "group";
+
 export interface ChatMessage {
   id: string;
   convId: string;
   dir: "in" | "out";
   body: string;
   sentAt: number;
+  sender?: string; // display name of the sender (group messages)
   status?: "sending" | "sent" | "failed";
 }
 
 export interface Conversation {
-  peerUserId: string;
-  username: string;
+  id: string;
+  kind: ConversationKind;
+  title: string;
   messages: ChatMessage[];
+  members?: GroupMember[];
 }
 
 export interface MessengerState {
@@ -49,11 +56,18 @@ export interface MessengerState {
   connected: boolean;
   identity?: Identity;
   conversations: Record<string, Conversation>;
-  activePeer?: string;
+  activeConvId?: string;
   error?: string;
 }
 
 type Listener = () => void;
+
+interface OutboundGroup {
+  session: GroupSession;
+  sessionId: string;
+  deliveredTo: Set<string>;
+  memberSig: string;
+}
 
 class Messenger {
   private state: MessengerState = {
@@ -66,6 +80,9 @@ class Messenger {
   private account: CryptoAccount | null = null;
   private pickleKey = "";
   private sessions = new Map<string, CryptoSession[]>();
+  private groupOut = new Map<string, OutboundGroup>();
+  private groupIn = new Map<string, GroupInboundSession>();
+  private pendingGroup = new Map<string, StoredMessage[]>();
   private socket: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
@@ -82,10 +99,11 @@ class Messenger {
     for (const l of this.listeners) l();
   }
 
-  private upsertConversation(conv: Conversation) {
-    this.set({
-      conversations: { ...this.state.conversations, [conv.peerUserId]: conv },
-    });
+  private get id(): Identity {
+    return this.state.identity!;
+  }
+  private get myIdentityKey(): string {
+    return this.account!.identityKeys().curve25519;
   }
 
   // ---- boot --------------------------------------------------------------
@@ -99,9 +117,11 @@ class Messenger {
       this.pickleKey = pickleKey;
       this.account = CryptoAccount.unpickle(pickleKey, accountPickle);
       await this.loadSessions();
+      await this.loadGroupInSessions();
       await this.loadConversations();
       this.set({ status: "ready", identity });
       this.connect();
+      void this.refreshGroups();
     } else {
       this.set({ status: "loggedOut" });
     }
@@ -117,20 +137,36 @@ class Messenger {
     }
   }
 
+  private async loadGroupInSessions() {
+    this.groupIn.clear();
+    for (const rec of await storage.allGroupIn()) {
+      this.groupIn.set(
+        rec.sessionId,
+        GroupInboundSession.unpickle(this.pickleKey, rec.pickle),
+      );
+    }
+  }
+
   private async loadConversations() {
     const convs = await storage.allConversations();
     const map: Record<string, Conversation> = {};
     for (const c of convs) {
-      const msgs = (await storage.messagesFor(c.peerUserId)).sort(
+      const msgs = (await storage.messagesFor(c.id)).sort(
         (a, b) => a.sentAt - b.sentAt,
       );
-      map[c.peerUserId] = {
-        peerUserId: c.peerUserId,
-        username: c.username,
-        messages: msgs,
-      };
+      map[c.id] = { id: c.id, kind: c.kind, title: c.title, messages: msgs };
     }
     this.set({ conversations: map });
+  }
+
+  /** Pull the server's view of our groups and reflect membership changes. */
+  private async refreshGroups() {
+    try {
+      const { groups } = await api.listGroups(this.id.token);
+      for (const g of groups) await this.ensureGroupConversation(g);
+    } catch {
+      /* offline; we'll retry on next boot */
+    }
   }
 
   // ---- auth --------------------------------------------------------------
@@ -184,10 +220,11 @@ class Messenger {
 
       this.set({ status: "ready", identity, conversations: {} });
       this.connect();
+      void this.refreshGroups();
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "Something went wrong";
-      this.set({ error: message });
+      this.set({
+        error: err instanceof ApiError ? err.message : "Something went wrong",
+      });
       throw err;
     }
   }
@@ -201,7 +238,14 @@ class Messenger {
     this.account?.free();
     this.account = null;
     this.sessions.clear();
-    this.set({ status: "loggedOut", identity: undefined, conversations: {}, activePeer: undefined });
+    this.groupOut.clear();
+    this.groupIn.clear();
+    this.set({
+      status: "loggedOut",
+      identity: undefined,
+      conversations: {},
+      activeConvId: undefined,
+    });
   }
 
   // ---- persistence helpers ----------------------------------------------
@@ -216,14 +260,21 @@ class Messenger {
       pickles: list.map((s) => s.pickle(this.pickleKey)),
     });
   }
+  private async saveGroupOut(groupId: string, g: OutboundGroup) {
+    await storage.putGroupOut({
+      groupId,
+      sessionId: g.sessionId,
+      pickle: g.session.pickle(this.pickleKey),
+      deliveredTo: [...g.deliveredTo],
+      memberSig: g.memberSig,
+    });
+  }
 
   private async replenishKeys(count: number) {
     if (!this.account || !this.state.identity) return;
     const oneTimeKeys = this.account.generateOneTimeKeys(count);
     this.account.markKeysAsPublished();
-    await api
-      .replenish({ oneTimeKeys }, this.state.identity.token)
-      .catch(() => undefined);
+    await api.replenish({ oneTimeKeys }, this.id.token).catch(() => undefined);
     await this.saveAccount();
   }
 
@@ -234,7 +285,6 @@ class Messenger {
     const url = `${location.origin.replace(/^http/, "ws")}${WS_PATH}?token=${id.token}`;
     const socket = new WebSocket(url);
     this.socket = socket;
-
     socket.onopen = () => {
       this.reconnectDelay = 1000;
       this.set({ connected: true });
@@ -286,21 +336,49 @@ class Messenger {
     }
   }
 
-  // ---- sending -----------------------------------------------------------
+  // ---- conversations -----------------------------------------------------
+  setActiveConv(id: string) {
+    this.set({ activeConvId: id });
+  }
+
+  private async ensureDmConversation(peerUserId: string, username: string) {
+    await storage.putConversation({ id: peerUserId, kind: "dm", title: username });
+    const existing = this.state.conversations[peerUserId];
+    this.upsert({
+      id: peerUserId,
+      kind: "dm",
+      title: username,
+      messages: existing?.messages ?? [],
+    });
+  }
+
+  private async ensureGroupConversation(group: GroupInfo) {
+    await storage.putConversation({
+      id: group.groupId,
+      kind: "group",
+      title: group.name,
+    });
+    const existing = this.state.conversations[group.groupId];
+    this.upsert({
+      id: group.groupId,
+      kind: "group",
+      title: group.name,
+      members: group.members,
+      messages: existing?.messages ?? [],
+    });
+  }
+
+  private upsert(conv: Conversation) {
+    this.set({
+      conversations: { ...this.state.conversations, [conv.id]: conv },
+    });
+  }
+
   async startConversation(username: string): Promise<string | undefined> {
-    const id = this.state.identity;
-    if (!id) return undefined;
     try {
-      const { userId } = await api.lookup(username, id.token);
-      const existing = this.state.conversations[userId];
-      const conv: Conversation = existing ?? {
-        peerUserId: userId,
-        username,
-        messages: [],
-      };
-      await storage.putConversation({ peerUserId: userId, username });
-      this.upsertConversation(conv);
-      this.set({ activePeer: userId });
+      const { userId } = await api.lookup(username, this.id.token);
+      await this.ensureDmConversation(userId, username);
+      this.set({ activeConvId: userId });
       return userId;
     } catch (err) {
       this.set({ error: err instanceof ApiError ? err.message : "Lookup failed" });
@@ -308,19 +386,32 @@ class Messenger {
     }
   }
 
-  setActivePeer(peerUserId: string) {
-    this.set({ activePeer: peerUserId });
+  async createGroup(name: string, memberUsernames: string[]): Promise<void> {
+    try {
+      const memberUserIds: string[] = [];
+      for (const uname of memberUsernames) {
+        const trimmed = uname.trim();
+        if (!trimmed) continue;
+        const { userId } = await api.lookup(trimmed, this.id.token);
+        memberUserIds.push(userId);
+      }
+      const group = await api.createGroup({ name, memberUserIds }, this.id.token);
+      await this.ensureGroupConversation(group);
+      this.set({ activeConvId: group.groupId });
+    } catch (err) {
+      this.set({
+        error: err instanceof ApiError ? err.message : "Could not create group",
+      });
+    }
   }
 
+  // ---- 1:1 sending -------------------------------------------------------
   private async ensureOutboundSession(target: {
     userId: string;
     deviceId: string;
   }): Promise<CryptoSession> {
-    const id = this.state.identity!;
-    const bundle = (await api.claim([target], id.token)).bundles[0];
-    if (!bundle?.oneTimeKey) {
-      throw new Error("Recipient has no available keys");
-    }
+    const bundle = (await api.claim([target], this.id.token)).bundles[0];
+    if (!bundle?.oneTimeKey) throw new Error("Recipient has no available keys");
     const existing = this.sessions.get(bundle.identityKey);
     if (existing && existing.length > 0) return existing[existing.length - 1]!;
 
@@ -334,9 +425,7 @@ class Messenger {
   }
 
   async sendText(peerUserId: string, text: string): Promise<void> {
-    const id = this.state.identity;
-    if (!id || !this.account || !text.trim()) return;
-
+    if (!this.account || !text.trim()) return;
     const msgId = crypto.randomUUID();
     const content: MessageContent = {
       kind: "text",
@@ -344,10 +433,7 @@ class Messenger {
       sentAt: Date.now(),
       msgId,
     };
-
-    // Optimistically render the outgoing message.
-    const conv = this.state.conversations[peerUserId];
-    const username = conv?.username ?? peerUserId;
+    const username = this.state.conversations[peerUserId]?.title ?? peerUserId;
     const record: StoredMessageRec = {
       id: msgId,
       convId: peerUserId,
@@ -356,36 +442,13 @@ class Messenger {
       sentAt: content.sentAt,
       status: "sending",
     };
-    await storage.putMessage(record);
-    this.appendMessage(peerUserId, username, record);
+    await this.persistAndAppend(peerUserId, "dm", username, record);
 
     try {
-      const { devices } = await api.devices(peerUserId, id.token);
+      const { devices } = await api.devices(peerUserId, this.id.token);
       if (devices.length === 0) throw new Error("Recipient has no devices");
-
       for (const device of devices) {
-        const session = await this.ensureOutboundSession({
-          userId: peerUserId,
-          deviceId: device.deviceId,
-        });
-        const enc = session.encrypt(JSON.stringify(content));
-        await this.saveSessions(device.identityKey);
-        const envelope: EncryptedEnvelope = {
-          v: 1,
-          alg: "olm",
-          msgType: enc.msgType,
-          body: enc.body,
-          senderIdentityKey: this.account.identityKeys().curve25519,
-        };
-        this.sendFrame({
-          t: "send",
-          message: {
-            toUserId: peerUserId,
-            toDeviceId: device.deviceId,
-            clientMsgId: `${msgId}:${device.deviceId}`,
-            envelope,
-          },
-        });
+        await this.sendOlmContent(peerUserId, device, content, msgId);
       }
       await this.updateMessageStatus(peerUserId, msgId, "sent");
     } catch (err) {
@@ -394,45 +457,170 @@ class Messenger {
     }
   }
 
-  // ---- receiving ---------------------------------------------------------
-  private async handleIncoming(message: {
-    id: string;
-    fromUserId: string;
-    fromDeviceId: string;
-    envelope: EncryptedEnvelope;
-    sentAt: number;
-  }): Promise<void> {
-    try {
-      const plaintext = await this.decryptEnvelope(message.envelope);
-      const content = JSON.parse(plaintext) as MessageContent;
-      this.sendFrame({ t: "ack", ids: [message.id] });
+  /** Encrypt one piece of content to one device over Olm and send it. */
+  private async sendOlmContent(
+    toUserId: string,
+    device: { deviceId: string; identityKey: string },
+    content: MessageContent,
+    msgId: string,
+  ) {
+    const session = await this.ensureOutboundSession({
+      userId: toUserId,
+      deviceId: device.deviceId,
+    });
+    const enc = session.encrypt(JSON.stringify(content));
+    await this.saveSessions(device.identityKey);
+    const envelope: EncryptedEnvelope = {
+      v: 1,
+      alg: "olm",
+      msgType: enc.msgType,
+      body: enc.body,
+      senderIdentityKey: this.myIdentityKey,
+    };
+    this.sendFrame({
+      t: "send",
+      message: {
+        toUserId,
+        toDeviceId: device.deviceId,
+        clientMsgId: `${msgId}:${device.deviceId}`,
+        envelope,
+      },
+    });
+  }
 
-      if (content.kind !== "text") return; // groups/attachments/etc. come later
-
-      const convId = message.fromUserId;
-      let username = this.state.conversations[convId]?.username;
-      if (!username) {
-        username = await this.resolveUsername(convId);
-        await storage.putConversation({ peerUserId: convId, username });
+  // ---- group sending (Megolm) -------------------------------------------
+  private async ensureGroupSession(
+    groupId: string,
+    memberSig: string,
+  ): Promise<OutboundGroup> {
+    let g = this.groupOut.get(groupId);
+    if (!g) {
+      const stored = await storage.getGroupOut(groupId);
+      if (stored) {
+        g = {
+          session: GroupSession.unpickle(this.pickleKey, stored.pickle),
+          sessionId: stored.sessionId,
+          deliveredTo: new Set(stored.deliveredTo),
+          memberSig: stored.memberSig,
+        };
+        this.groupOut.set(groupId, g);
       }
-      const record: StoredMessageRec = {
-        id: content.msgId || message.id,
-        convId,
-        dir: "in",
-        body: content.body,
-        sentAt: content.sentAt || message.sentAt,
+    }
+    // Rotate when membership changed (so removed members can't read further).
+    if (!g || g.memberSig !== memberSig) {
+      const session = GroupSession.create();
+      g = {
+        session,
+        sessionId: session.sessionId(),
+        deliveredTo: new Set(),
+        memberSig,
       };
-      await storage.putMessage(record);
-      this.appendMessage(convId, username, record);
+      this.groupOut.set(groupId, g);
+    }
+    return g;
+  }
+
+  async sendGroupText(groupId: string, text: string): Promise<void> {
+    if (!this.account || !text.trim()) return;
+    const msgId = crypto.randomUUID();
+    const content: MessageContent = {
+      kind: "text",
+      body: text,
+      sentAt: Date.now(),
+      msgId,
+    };
+    const title = this.state.conversations[groupId]?.title ?? "group";
+    const record: StoredMessageRec = {
+      id: msgId,
+      convId: groupId,
+      dir: "out",
+      body: text,
+      sentAt: content.sentAt,
+      status: "sending",
+    };
+    await this.persistAndAppend(groupId, "group", title, record);
+
+    try {
+      const group = await api.getGroup(groupId, this.id.token);
+      const memberSig = group.members
+        .map((m) => m.userId)
+        .sort()
+        .join(",");
+      const g = await this.ensureGroupSession(groupId, memberSig);
+
+      // Gather every member device except our own current device.
+      const targets: Array<{ userId: string; deviceId: string; identityKey: string }> =
+        [];
+      for (const m of group.members) {
+        const { devices } = await api.devices(m.userId, this.id.token);
+        for (const d of devices) {
+          if (d.identityKey === this.myIdentityKey) continue;
+          targets.push({ userId: m.userId, deviceId: d.deviceId, identityKey: d.identityKey });
+        }
+      }
+
+      // Distribute the group key to any device that doesn't have it yet.
+      for (const t of targets) {
+        if (g.deliveredTo.has(t.identityKey)) continue;
+        const roomKey: MessageContent = {
+          kind: "room-key",
+          groupId,
+          sessionId: g.sessionId,
+          sessionKey: g.session.sessionKey(),
+        };
+        await this.sendOlmContent(t.userId, t, roomKey, `${msgId}-key`);
+        g.deliveredTo.add(t.identityKey);
+      }
+
+      // Encrypt the message once with Megolm and fan it out to all devices.
+      const ciphertext = g.session.encrypt(JSON.stringify(content));
+      const envelope: MegolmEnvelope = {
+        v: 1,
+        alg: "megolm",
+        body: ciphertext,
+        senderIdentityKey: this.myIdentityKey,
+        groupId,
+        sessionId: g.sessionId,
+      };
+      for (const t of targets) {
+        this.sendFrame({
+          t: "send",
+          message: {
+            toUserId: t.userId,
+            toDeviceId: t.deviceId,
+            clientMsgId: `${msgId}:${t.deviceId}`,
+            envelope,
+          },
+        });
+      }
+      await this.saveGroupOut(groupId, g);
+      await this.updateMessageStatus(groupId, msgId, "sent");
     } catch (err) {
-      console.warn("failed to handle incoming message", err);
-      // Still ack so the server can drop an undecryptable duplicate.
-      this.sendFrame({ t: "ack", ids: [message.id] });
+      await this.updateMessageStatus(groupId, msgId, "failed");
+      this.set({ error: err instanceof Error ? err.message : "Send failed" });
     }
   }
 
-  private async decryptEnvelope(env: EncryptedEnvelope): Promise<string> {
-    if (env.alg !== "olm") throw new Error(`unsupported alg ${env.alg}`);
+  // ---- receiving ---------------------------------------------------------
+  private async handleIncoming(message: StoredMessage): Promise<void> {
+    this.sendFrame({ t: "ack", ids: [message.id] });
+    try {
+      if (message.envelope.alg === "megolm") {
+        await this.handleGroupMessage(message, message.envelope);
+      } else {
+        const plaintext = await this.decryptOlm(message.envelope);
+        await this.routeOlmContent(
+          message,
+          JSON.parse(plaintext) as MessageContent,
+        );
+      }
+    } catch (err) {
+      console.warn("failed to handle incoming message", err);
+    }
+  }
+
+  private async decryptOlm(env: EncryptedEnvelope): Promise<string> {
+    if (env.alg !== "olm") throw new Error("not an olm envelope");
     const ik = env.senderIdentityKey;
     const list = this.sessions.get(ik) ?? [];
 
@@ -461,47 +649,135 @@ class Messenger {
         await this.saveSessions(ik);
         return pt;
       } catch {
-        /* try the next session */
+        /* try next session */
       }
     }
     throw new Error("no matching session for message");
   }
 
-  private async resolveUsername(userId: string): Promise<string> {
-    const id = this.state.identity!;
+  private async routeOlmContent(message: StoredMessage, content: MessageContent) {
+    if (content.kind === "room-key") {
+      if (!this.groupIn.has(content.sessionId)) {
+        const session = GroupInboundSession.create(content.sessionKey);
+        this.groupIn.set(content.sessionId, session);
+        await storage.putGroupIn({
+          sessionId: content.sessionId,
+          groupId: content.groupId,
+          pickle: session.pickle(this.pickleKey),
+        });
+      }
+      await this.ensureGroupKnown(content.groupId);
+      await this.flushPendingGroup(content.sessionId);
+      return;
+    }
+    if (content.kind === "text") {
+      const convId = message.fromUserId;
+      const username =
+        this.state.conversations[convId]?.title ??
+        (await this.resolveUsername(convId));
+      const record: StoredMessageRec = {
+        id: content.msgId || message.id,
+        convId,
+        dir: "in",
+        body: content.body,
+        sentAt: content.sentAt || message.sentAt,
+      };
+      await this.persistAndAppend(convId, "dm", username, record);
+    }
+  }
+
+  private async handleGroupMessage(message: StoredMessage, env: MegolmEnvelope) {
+    const session = this.groupIn.get(env.sessionId);
+    if (!session) {
+      // The room key hasn't arrived yet — buffer and decrypt once it does.
+      const queue = this.pendingGroup.get(env.sessionId) ?? [];
+      queue.push(message);
+      this.pendingGroup.set(env.sessionId, queue);
+      await this.ensureGroupKnown(env.groupId);
+      return;
+    }
+    const { plaintext } = session.decrypt(env.body);
+    const content = JSON.parse(plaintext) as MessageContent;
+    if (content.kind !== "text") return;
+
+    await this.ensureGroupKnown(env.groupId);
+    const title = this.state.conversations[env.groupId]?.title ?? "group";
+    const sender = await this.resolveUsername(message.fromUserId);
+    const record: StoredMessageRec = {
+      id: content.msgId || message.id,
+      convId: env.groupId,
+      dir: "in",
+      body: content.body,
+      sentAt: content.sentAt || message.sentAt,
+      sender,
+    };
+    await this.persistAndAppend(env.groupId, "group", title, record);
+  }
+
+  private async flushPendingGroup(sessionId: string) {
+    const queue = this.pendingGroup.get(sessionId);
+    if (!queue) return;
+    this.pendingGroup.delete(sessionId);
+    for (const message of queue) {
+      if (message.envelope.alg === "megolm") {
+        await this.handleGroupMessage(message, message.envelope);
+      }
+    }
+  }
+
+  private async ensureGroupKnown(groupId: string) {
+    if (this.state.conversations[groupId]) return;
     try {
-      return (await api.profile(userId, id.token)).username;
+      const group = await api.getGroup(groupId, this.id.token);
+      await this.ensureGroupConversation(group);
+    } catch {
+      /* not a member / offline */
+    }
+  }
+
+  private async resolveUsername(userId: string): Promise<string> {
+    if (userId === this.state.identity?.userId) return this.id.username;
+    try {
+      return (await api.profile(userId, this.id.token)).username;
     } catch {
       return userId.slice(0, 8);
     }
   }
 
   // ---- conversation state mutation --------------------------------------
-  private appendMessage(
-    peerUserId: string,
-    username: string,
+  private async persistAndAppend(
+    convId: string,
+    kind: ConversationKind,
+    title: string,
     record: StoredMessageRec,
   ) {
-    const existing = this.state.conversations[peerUserId];
+    await storage.putMessage(record);
+    const existing = this.state.conversations[convId];
     const messages = existing ? existing.messages.slice() : [];
     if (!messages.some((m) => m.id === record.id)) messages.push(record);
     messages.sort((a, b) => a.sentAt - b.sentAt);
-    this.upsertConversation({ peerUserId, username, messages });
+    this.upsert({
+      id: convId,
+      kind: existing?.kind ?? kind,
+      title: existing?.title ?? title,
+      members: existing?.members,
+      messages,
+    });
   }
 
   private async updateMessageStatus(
-    peerUserId: string,
+    convId: string,
     msgId: string,
     status: ChatMessage["status"],
   ) {
-    const conv = this.state.conversations[peerUserId];
+    const conv = this.state.conversations[convId];
     if (!conv) return;
     const messages = conv.messages.map((m) =>
       m.id === msgId ? { ...m, status } : m,
     );
     const updated = messages.find((m) => m.id === msgId);
     if (updated) await storage.putMessage(updated as StoredMessageRec);
-    this.upsertConversation({ ...conv, messages });
+    this.upsert({ ...conv, messages });
   }
 
   fingerprint(): string {
@@ -514,4 +790,3 @@ class Messenger {
 }
 
 export const messenger = new Messenger();
-export type { StoredConversation };

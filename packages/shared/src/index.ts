@@ -126,21 +126,39 @@ export type UserLookupResponse = z.infer<typeof UserLookupResponse>;
 // ---------------------------------------------------------------------------
 
 /**
- * Ciphertext as produced by the Double Ratchet. The server treats `body` as an
- * opaque blob; only the recipient device can decrypt it. The decrypted plaintext
- * is itself a JSON `MessageContent` the server never sees.
+ * Ciphertext as produced by the ratchet. The server treats `body` as an opaque
+ * blob; only the recipient device can decrypt it. The decrypted plaintext is
+ * itself a JSON `MessageContent` the server never sees.
+ *
+ * "olm" = 1:1 / device-to-device Double Ratchet. "megolm" = group ratchet,
+ * which additionally carries the group + session id so the recipient can pick
+ * the right inbound group session.
  */
-export const EncryptedEnvelope = z.object({
+export const OlmEnvelope = z.object({
   v: z.literal(PROTOCOL_VERSION),
-  /** "olm" for 1:1 / device-to-device. "megolm" reserved for group chats. */
-  alg: z.enum(["olm", "megolm"]),
+  alg: z.literal("olm"),
   /** Olm message type: 0 = pre-key (session-establishing), 1 = normal. */
   msgType: z.union([z.literal(0), z.literal(1)]),
-  /** Base64 ciphertext. */
   body: z.string(),
-  /** Sender device's Curve25519 identity key — needed to match/create a session. */
+  /** Sender device's Curve25519 identity key — to match/create a session. */
   senderIdentityKey: z.string(),
 });
+export type OlmEnvelope = z.infer<typeof OlmEnvelope>;
+
+export const MegolmEnvelope = z.object({
+  v: z.literal(PROTOCOL_VERSION),
+  alg: z.literal("megolm"),
+  body: z.string(),
+  senderIdentityKey: z.string(),
+  groupId: z.string(),
+  sessionId: z.string(),
+});
+export type MegolmEnvelope = z.infer<typeof MegolmEnvelope>;
+
+export const EncryptedEnvelope = z.discriminatedUnion("alg", [
+  OlmEnvelope,
+  MegolmEnvelope,
+]);
 export type EncryptedEnvelope = z.infer<typeof EncryptedEnvelope>;
 
 /**
@@ -162,7 +180,14 @@ export type MessageContent =
       msgId: string;
     }
   | { kind: "receipt"; msgIds: string[]; state: "delivered" | "read" }
-  | { kind: "typing"; active: boolean };
+  | { kind: "typing"; active: boolean }
+  // Control message: shares a Megolm group session key over a 1:1 Olm session.
+  | {
+      kind: "room-key";
+      groupId: string;
+      sessionId: string;
+      sessionKey: string;
+    };
 
 // ---------------------------------------------------------------------------
 // REST: send (fallback when WS is down) + mailbox drain
@@ -192,6 +217,41 @@ export type StoredMessage = z.infer<typeof StoredMessage>;
 
 export const MailboxResponse = z.object({ messages: z.array(StoredMessage) });
 export type MailboxResponse = z.infer<typeof MailboxResponse>;
+
+// ---------------------------------------------------------------------------
+// Groups (membership is server-side metadata; message content stays E2E)
+// ---------------------------------------------------------------------------
+
+export const GroupRole = z.enum(["admin", "member"]);
+export type GroupRole = z.infer<typeof GroupRole>;
+
+export const GroupMember = z.object({
+  userId: z.string(),
+  username: z.string(),
+  role: GroupRole,
+});
+export type GroupMember = z.infer<typeof GroupMember>;
+
+export const GroupInfo = z.object({
+  groupId: z.string(),
+  name: z.string(),
+  createdBy: z.string(),
+  createdAt: z.number(),
+  members: z.array(GroupMember),
+});
+export type GroupInfo = z.infer<typeof GroupInfo>;
+
+export const CreateGroupRequest = z.object({
+  name: z.string().min(1).max(100),
+  memberUserIds: z.array(z.string()).max(500).default([]),
+});
+export type CreateGroupRequest = z.infer<typeof CreateGroupRequest>;
+
+export const AddMemberRequest = z.object({ userId: z.string() });
+export type AddMemberRequest = z.infer<typeof AddMemberRequest>;
+
+export const GroupListResponse = z.object({ groups: z.array(GroupInfo) });
+export type GroupListResponse = z.infer<typeof GroupListResponse>;
 
 // ---------------------------------------------------------------------------
 // WebSocket frames
