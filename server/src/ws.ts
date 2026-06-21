@@ -1,4 +1,4 @@
-import type { SocketStream } from "@fastify/websocket";
+import type { WebSocket } from "@fastify/websocket";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   ClientFrame,
@@ -11,8 +11,8 @@ import { devices, messages } from "./repo.js";
 import { verifyToken } from "./tokens.js";
 
 export function registerWebSocket(app: FastifyInstance) {
-  app.get(WS_PATH, { websocket: true }, (connection: SocketStream, req: FastifyRequest) => {
-    const socket = connection.socket;
+  // @fastify/websocket v11 passes the raw socket directly to the handler.
+  app.get(WS_PATH, { websocket: true }, (socket: WebSocket, req: FastifyRequest) => {
     const send = (frame: ServerFrame) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(frame));
     };
