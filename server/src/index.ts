@@ -10,7 +10,9 @@ import { authRoutes } from "./routes/auth.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { groupRoutes } from "./routes/groups.js";
 import { keyRoutes } from "./routes/keys.js";
+import { lockdownRoutes } from "./routes/lockdown.js";
 import { messageRoutes } from "./routes/messages.js";
+import { turnRoutes } from "./routes/turn.js";
 import { registerWebSocket } from "./ws.js";
 
 const app = Fastify({
@@ -32,6 +34,16 @@ app.addContentTypeParser(
   (_req, body, done) => done(null, body),
 );
 
+// Conservative security headers (TLS is terminated at the Cloudflare edge).
+app.addHook("onSend", async (_req, reply, payload) => {
+  reply.header("x-content-type-options", "nosniff");
+  reply.header("x-frame-options", "DENY");
+  reply.header("referrer-policy", "no-referrer");
+  // Allow same-origin camera/mic so WebRTC calls work from the PWA.
+  reply.header("permissions-policy", "camera=(self), microphone=(self), geolocation=()");
+  return payload;
+});
+
 // All REST endpoints live under /app/v1 — the "backend connector".
 await app.register(
   async (api) => {
@@ -45,6 +57,8 @@ await app.register(
     await messageRoutes(api);
     await groupRoutes(api);
     await blobRoutes(api);
+    await lockdownRoutes(api);
+    await turnRoutes(api);
   },
   { prefix: API_V1 },
 );

@@ -60,6 +60,8 @@ export interface MessengerState {
   conversations: Record<string, Conversation>;
   activeConvId?: string;
   error?: string;
+  /** Shown once right after registration so the user can save it. */
+  recoveryKey?: string;
 }
 
 type Listener = () => void;
@@ -220,15 +222,40 @@ class Messenger {
       await storage.setKV("pickleKey", this.pickleKey);
       await this.saveAccount();
 
-      this.set({ status: "ready", identity, conversations: {} });
+      this.set({
+        status: "ready",
+        identity,
+        conversations: {},
+        recoveryKey: mode === "register" ? auth.recoveryKey : undefined,
+      });
       this.connect();
       void this.refreshGroups();
     } catch (err) {
-      this.set({
-        error: err instanceof ApiError ? err.message : "Something went wrong",
-      });
+      this.set({ error: this.describeError(err) });
       throw err;
     }
+  }
+
+  private describeError(err: unknown): string {
+    if (!(err instanceof ApiError)) return "Something went wrong";
+    switch (err.code) {
+      case "account_locked":
+        return "Account locked after suspicious activity. Unlocking needs your recovery key plus the admin key.";
+      case "temporarily_locked":
+        return "Too many attempts — temporarily locked. Try again shortly.";
+      case "invalid_credentials":
+        return "Invalid username or password.";
+      case "username_taken":
+        return "That username is already taken.";
+      case "rate_limited":
+        return "Too many requests — please slow down.";
+      default:
+        return err.message;
+    }
+  }
+
+  dismissRecoveryKey() {
+    this.set({ recoveryKey: undefined });
   }
 
   async logout(): Promise<void> {

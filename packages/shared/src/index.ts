@@ -74,8 +74,47 @@ export const AuthResponse = z.object({
   deviceId: z.string(),
   username: z.string(),
   expiresAt: z.number(),
+  /** One-time recovery key, returned on registration only. Half of the dual
+   * key needed to reopen a hard-locked account — show once, store safely. */
+  recoveryKey: z.string().optional(),
 });
 export type AuthResponse = z.infer<typeof AuthResponse>;
+
+// ---------------------------------------------------------------------------
+// Tamper-lockdown
+// ---------------------------------------------------------------------------
+
+export const UnlockRequest = z.object({
+  username: z.string(),
+  recoveryKey: z.string(),
+  adminToken: z.string(),
+});
+export type UnlockRequest = z.infer<typeof UnlockRequest>;
+
+export const LockStatusResponse = z.object({
+  locked: z.boolean(),
+  level: z.number(),
+  retryAfter: z.number().optional(),
+});
+export type LockStatusResponse = z.infer<typeof LockStatusResponse>;
+
+// ---------------------------------------------------------------------------
+// Voice/video calls (WebRTC). Media runs over a real UDP channel via coturn;
+// signaling is relayed E2E-encrypted through the normal message pipe below.
+// ---------------------------------------------------------------------------
+
+export const IceServer = z.object({
+  urls: z.union([z.string(), z.array(z.string())]),
+  username: z.string().optional(),
+  credential: z.string().optional(),
+});
+export type IceServer = z.infer<typeof IceServer>;
+
+export const TurnResponse = z.object({
+  iceServers: z.array(IceServer),
+  ttl: z.number(),
+});
+export type TurnResponse = z.infer<typeof TurnResponse>;
 
 // ---------------------------------------------------------------------------
 // Key directory
@@ -187,7 +226,12 @@ export type MessageContent =
       groupId: string;
       sessionId: string;
       sessionKey: string;
-    };
+    }
+  // WebRTC call signaling — E2E-encrypted, relayed device-to-device.
+  | { kind: "call-offer"; callId: string; sdp: string; video: boolean; sentAt: number }
+  | { kind: "call-answer"; callId: string; sdp: string }
+  | { kind: "call-ice"; callId: string; candidate: string }
+  | { kind: "call-hangup"; callId: string; reason?: string };
 
 // ---------------------------------------------------------------------------
 // REST: send (fallback when WS is down) + mailbox drain

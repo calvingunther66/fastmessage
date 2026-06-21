@@ -99,4 +99,30 @@ CREATE TABLE IF NOT EXISTS group_members (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members (user_id);
+
+-- Per-account security state for the tamper-lockdown system. A hard lock
+-- (lock_level = 2) requires the dual-key unlock (user recovery key + admin key).
+CREATE TABLE IF NOT EXISTS account_security (
+  user_id       TEXT PRIMARY KEY,
+  recovery_hash TEXT NOT NULL,         -- hash of the user's recovery key
+  failed_logins INTEGER NOT NULL DEFAULT 0,
+  last_failed_at INTEGER,
+  lock_level    INTEGER NOT NULL DEFAULT 0,  -- 0 normal, 1 soft (timed), 2 hard
+  locked_until  INTEGER,               -- soft-lock expiry
+  tamper_score  INTEGER NOT NULL DEFAULT 0,  -- escalates with attempts while locked
+  updated_at    INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Web Push subscriptions per device (content-free wake notifications).
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint   TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  device_id  TEXT NOT NULL,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_push_user_device ON push_subscriptions (user_id, device_id);
 `);

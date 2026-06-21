@@ -200,6 +200,9 @@ const selectSession = db.prepare(
 const deleteSessionStmt = db.prepare(
   `DELETE FROM auth_sessions WHERE token_hash = ?`,
 );
+const deleteSessionsForUserStmt = db.prepare(
+  `DELETE FROM auth_sessions WHERE user_id = ?`,
+);
 
 export const authSessions = {
   create(
@@ -225,6 +228,10 @@ export const authSessions = {
   },
   delete(tokenHash: string) {
     deleteSessionStmt.run(tokenHash);
+  },
+  /** Revoke every active session for a user (used when an account hard-locks). */
+  deleteAllForUser(userId: string) {
+    deleteSessionsForUserStmt.run(userId);
   },
 };
 

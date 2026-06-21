@@ -12,6 +12,16 @@ const Env = z.object({
   /** Static web build to serve at `/`. Empty disables static serving. */
   WEB_DIST: z.string().default(""),
   NODE_ENV: z.string().default("development"),
+  /**
+   * Admin half of the dual-key unlock. A hard-locked account can only be
+   * reopened with BOTH the user's recovery key and an admin token derived from
+   * this secret. Empty disables admin-side unlock (lockdown still engages).
+   */
+  ADMIN_UNLOCK_SECRET: z.string().default(""),
+  /** Shared secret for time-limited coturn TURN credentials (voice/video). */
+  TURN_SECRET: z.string().default(""),
+  TURN_PUBLIC_HOST: z.string().default(""),
+  TURN_REALM: z.string().default(""),
 });
 
 const env = Env.parse(process.env);
@@ -24,6 +34,13 @@ export const config = {
     .filter(Boolean),
   /** Session token lifetime: 90 days. */
   tokenTtlMs: 90 * 24 * 60 * 60 * 1000,
+  /** Tamper-lockdown thresholds. */
+  security: {
+    softFailThreshold: 5, // failures before a timed soft lock
+    hardFailThreshold: 10, // failures before a dual-key hard lockdown
+    failWindowMs: 15 * 60 * 1000,
+    softLockBaseMs: 30 * 1000, // doubles with tamper score
+  },
 };
 
 if (config.isProd && config.SESSION_SECRET.startsWith("dev-only")) {
