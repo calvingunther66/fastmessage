@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join, isAbsolute, resolve } from "node:path";
-import Database from "better-sqlite3";
+import Database from "better-sqlite3-multiple-ciphers";
 import { config } from "./config.js";
 
 const dataDir = isAbsolute(config.DATA_DIR)
@@ -12,6 +12,12 @@ mkdirSync(join(dataDir, "blobs"), { recursive: true });
 export const blobDir = join(dataDir, "blobs");
 
 export const db = new Database(join(dataDir, "fastmessage.sqlite"));
+// Encrypt the database at rest when a key is configured (must run before any
+// other statement). Protects metadata + password/recovery hashes; message
+// content is already ciphertext regardless.
+if (config.DB_ENCRYPTION_KEY) {
+  db.pragma(`key='${config.DB_ENCRYPTION_KEY.replace(/'/g, "''")}'`);
+}
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 

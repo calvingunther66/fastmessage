@@ -149,15 +149,29 @@ Implemented and verified:
 - ✅ **Multi-device sync** — sign in on web + phone; sent messages mirror to your
   own devices via encrypted carbons, and incoming already fans out to all devices
 - ✅ **Web Push** — content-free wake notifications when a device is offline
+- ✅ **QR device-linking** — add a device with a one-time code (no password)
+- ✅ **Safety-number verification** — compare fingerprints to detect a MITM
+- ✅ **At-rest DB encryption** (optional) + a consistent backup script
 - ✅ Hardening — per-IP rate limiting on auth, security headers
 - ✅ Olm/Megolm client library (unit-tested) + IndexedDB persistence
 - ✅ Installable PWA; Dockerized server that serves it; Cloudflare Tunnel stack
 
-Planned next (scaffolding in place):
+Possible future polish: cross-signing (auto-trust your own new devices),
+read receipts/typing UI, message search.
 
-- ⏳ **QR device-linking** — add a device without re-entering the password
-- ⏳ **At-rest DB encryption** (SQLCipher) + automated backups
-- ⏳ **Safety-number verification** UI (fingerprints are already exchanged)
+## Backups & at-rest encryption
+
+Message content is always E2E ciphertext, so the database only ever holds
+metadata + password/recovery hashes. To also encrypt those at rest, set
+`DB_ENCRYPTION_KEY` (keep it safe and constant — losing it makes the DB
+unreadable). Snapshot the database any time, even while running:
+
+```bash
+DATA_DIR=/data DB_ENCRYPTION_KEY=… node server/scripts/backup.mjs
+```
+
+It writes a consistent (and still-encrypted) copy to `DATA_DIR/backups/`. Back up
+`DATA_DIR/blobs` too (the encrypted attachments) — e.g. rsync the data volume.
 
 ## Tamper-lockdown (dual-key unlock)
 

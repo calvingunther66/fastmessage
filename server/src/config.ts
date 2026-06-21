@@ -8,6 +8,8 @@ const Env = z.object({
   CORS_ORIGINS: z.string().default(""),
   SESSION_SECRET: z.string().min(16).default("dev-only-insecure-secret-change-me!"),
   DATA_DIR: z.string().default("./data"),
+  /** If set, the SQLite database is encrypted at rest with this key. */
+  DB_ENCRYPTION_KEY: z.string().default(""),
   MAX_BLOB_BYTES: z.coerce.number().int().positive().default(50 * 1024 * 1024),
   /** Static web build to serve at `/`. Empty disables static serving. */
   WEB_DIST: z.string().default(""),
