@@ -8,6 +8,7 @@ import { config } from "./config.js";
 import "./db.js"; // opens the database and ensures the schema exists
 import { authRoutes } from "./routes/auth.js";
 import { blobRoutes } from "./routes/blobs.js";
+import { deviceRoutes } from "./routes/devices.js";
 import { groupRoutes } from "./routes/groups.js";
 import { keyRoutes } from "./routes/keys.js";
 import { lockdownRoutes } from "./routes/lockdown.js";
@@ -61,6 +62,7 @@ await app.register(
     await lockdownRoutes(api);
     await turnRoutes(api);
     await pushRoutes(api);
+    await deviceRoutes(api);
   },
   { prefix: API_V1 },
 );

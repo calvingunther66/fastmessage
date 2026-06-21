@@ -7,6 +7,8 @@ import {
   type IdentityKeys,
 } from "@fastmessage/crypto";
 import {
+  type AuthResponse,
+  type DeviceKeyUpload,
   type EncryptedEnvelope,
   type GroupInfo,
   type GroupMember,
@@ -196,6 +198,33 @@ class Messenger {
     username: string,
     password: string,
   ): Promise<void> {
+    await this.provision(
+      (device) =>
+        mode === "register"
+          ? api.register({ username, password, device })
+          : api.login({ username, password, device }),
+      { displayName: username, isRegister: mode === "register" },
+    );
+  }
+
+  /** Link this browser to an existing account using a one-time code (no password). */
+  async linkWithCode(code: string): Promise<void> {
+    await this.provision(
+      (device) => api.linkClaim({ code: code.trim().toUpperCase(), device }),
+      { displayName: "linked device", isRegister: false },
+    );
+  }
+
+  /** Mint a one-time code (shown as a QR) to link another device to this account. */
+  async startDeviceLink(): Promise<{ code: string; expiresAt: number }> {
+    return api.linkStart(this.id.token);
+  }
+
+  /** Shared account-provisioning path for register / login / device-link. */
+  private async provision(
+    call: (device: DeviceKeyUpload) => Promise<AuthResponse>,
+    opts: { displayName: string; isRegister: boolean },
+  ): Promise<void> {
     await ensureCrypto();
     this.set({ error: undefined });
     try {
@@ -203,20 +232,15 @@ class Messenger {
       const keys: IdentityKeys = account.identityKeys();
       const oneTimeKeys = account.generateOneTimeKeys(INITIAL_ONE_TIME_KEYS);
       const fallbackKey = account.generateFallbackKey();
-      const deviceId = crypto.randomUUID();
-
-      const device = {
-        deviceId,
-        displayName: username,
+      const device: DeviceKeyUpload = {
+        deviceId: crypto.randomUUID(),
+        displayName: opts.displayName,
         identityKey: keys.curve25519,
         signingKey: keys.ed25519,
         oneTimeKeys,
         fallbackKey,
       };
-      const auth =
-        mode === "register"
-          ? await api.register({ username, password, device })
-          : await api.login({ username, password, device });
+      const auth = await call(device);
       account.markKeysAsPublished();
 
       this.account = account;
@@ -238,7 +262,7 @@ class Messenger {
         identity,
         conversations: {},
         verified: [],
-        recoveryKey: mode === "register" ? auth.recoveryKey : undefined,
+        recoveryKey: opts.isRegister ? auth.recoveryKey : undefined,
       });
       this.connect();
       void this.refreshGroups();
@@ -262,6 +286,8 @@ class Messenger {
         return "That username is already taken.";
       case "rate_limited":
         return "Too many requests — please slow down.";
+      case "invalid_or_expired_code":
+        return "That link code is invalid or has expired.";
       default:
         return err.message;
     }

@@ -77,7 +77,9 @@ form input {
 .dot { font-size: 0.72rem; }
 .dot.online { color: #34d399; }
 .dot.offline { color: var(--muted); }
-.link { background: none; border: none; color: var(--accent); font-size: 0.8rem; }
+.link { background: none; border: none; color: var(--accent); font-size: 0.8rem; cursor: pointer; padding: 0; }
+.head-actions { display: flex; flex-direction: column; gap: 0.2rem; align-items: flex-end; }
+.link-qr { display: block; margin: 0.5rem auto; border-radius: 8px; background: #fff; padding: 6px; }
 .new-chat { display: flex; gap: 0.5rem; padding: 0.75rem 1rem; }
 .new-chat input { flex: 1; padding: 0.55rem 0.7rem; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 .new-chat button { width: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 1.2rem; }

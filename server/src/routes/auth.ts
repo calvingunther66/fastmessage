@@ -1,13 +1,9 @@
 import { hash, verify } from "@node-rs/argon2";
 import type { FastifyInstance } from "fastify";
-import {
-  type AuthResponse,
-  type DeviceKeyUpload,
-  LoginRequest,
-  RegisterRequest,
-} from "@fastmessage/shared";
+import { LoginRequest, RegisterRequest, type AuthResponse } from "@fastmessage/shared";
+import { publishDeviceKeys } from "../publish.js";
 import { rateLimit } from "../ratelimit.js";
-import { devices, oneTimeKeys, users } from "../repo.js";
+import { users } from "../repo.js";
 import {
   lockState,
   provisionAccount,
@@ -17,20 +13,6 @@ import {
 } from "../security.js";
 import { issueToken, authFromRequest, revokeToken } from "../tokens.js";
 import { parse } from "../validate.js";
-
-function publishDeviceKeys(userId: string, device: DeviceKeyUpload) {
-  devices.upsert({
-    userId,
-    deviceId: device.deviceId,
-    displayName: device.displayName,
-    identityKey: device.identityKey,
-    signingKey: device.signingKey,
-    fallbackKey: device.fallbackKey ?? null,
-  });
-  if (Object.keys(device.oneTimeKeys).length > 0) {
-    oneTimeKeys.add(userId, device.deviceId, device.oneTimeKeys);
-  }
-}
 
 export async function authRoutes(app: FastifyInstance) {
   const limiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 30 });

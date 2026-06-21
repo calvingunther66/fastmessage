@@ -6,6 +6,8 @@ import {
   type DeviceListResponse,
   type GroupInfo,
   type GroupListResponse,
+  type LinkClaimRequest,
+  type LinkStartResponse,
   type LoginRequest,
   type PushSubscribeRequest,
   type RegisterRequest,
@@ -59,6 +61,10 @@ export const api = {
     req<AuthResponse>("/auth/login", { method: "POST", body }),
   logout: (token: string) =>
     req<{ ok: boolean }>("/auth/logout", { method: "POST", token }),
+  linkStart: (token: string) =>
+    req<LinkStartResponse>("/devices/link/start", { method: "POST", token }),
+  linkClaim: (body: LinkClaimRequest) =>
+    req<AuthResponse>("/devices/link/claim", { method: "POST", body }),
   lookup: (username: string, token: string) =>
     req<UserLookupResponse>(
       `/users/lookup?username=${encodeURIComponent(username)}`,

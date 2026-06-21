@@ -1,11 +1,13 @@
 import { type FormEvent, useState } from "react";
 import { useMessenger } from "../hooks.js";
 import { messenger } from "../lib/messaging.js";
+import { LinkModal } from "./LinkModal.js";
 
 export function Sidebar() {
   const state = useMessenger();
   const [newChat, setNewChat] = useState("");
   const [showGroup, setShowGroup] = useState(false);
+  const [showLink, setShowLink] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [groupMembers, setGroupMembers] = useState("");
 
@@ -43,10 +45,16 @@ export function Sidebar() {
             {state.connected ? "online" : "connecting…"}
           </span>
         </div>
-        <button className="link" onClick={() => void messenger.logout()} type="button">
-          Sign out
-        </button>
+        <div className="head-actions">
+          <button className="link" onClick={() => setShowLink(true)} type="button">
+            Link device
+          </button>
+          <button className="link" onClick={() => void messenger.logout()} type="button">
+            Sign out
+          </button>
+        </div>
       </header>
+      {showLink && <LinkModal onClose={() => setShowLink(false)} />}
 
       <form className="new-chat" onSubmit={startChat}>
         <input

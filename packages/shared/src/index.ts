@@ -68,6 +68,19 @@ export const LoginRequest = z.object({
 });
 export type LoginRequest = z.infer<typeof LoginRequest>;
 
+// Add a device to an existing account with a one-time link code (no password).
+export const LinkStartResponse = z.object({
+  code: z.string(),
+  expiresAt: z.number(),
+});
+export type LinkStartResponse = z.infer<typeof LinkStartResponse>;
+
+export const LinkClaimRequest = z.object({
+  code: z.string().min(4).max(32),
+  device: DeviceKeyUpload,
+});
+export type LinkClaimRequest = z.infer<typeof LinkClaimRequest>;
+
 export const AuthResponse = z.object({
   token: z.string(),
   userId: z.string(),
