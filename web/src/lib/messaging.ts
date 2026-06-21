@@ -90,6 +90,7 @@ class Messenger {
   private socket: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
+  private callSignalHandler?: (fromUserId: string, content: MessageContent) => void;
 
   // ---- external store API (for React's useSyncExternalStore) -------------
   subscribe = (l: Listener): (() => void) => {
@@ -746,6 +747,15 @@ class Messenger {
       await this.flushPendingGroup(content.sessionId);
       return;
     }
+    if (
+      content.kind === "call-offer" ||
+      content.kind === "call-answer" ||
+      content.kind === "call-ice" ||
+      content.kind === "call-hangup"
+    ) {
+      this.callSignalHandler?.(message.fromUserId, content);
+      return;
+    }
     if (content.kind === "text" || content.kind === "attachment") {
       const convId = message.fromUserId;
       const username =
@@ -878,6 +888,25 @@ class Messenger {
     const updated = messages.find((m) => m.id === msgId);
     if (updated) await storage.putMessage(updated as StoredMessageRec);
     this.upsert({ ...conv, messages });
+  }
+
+  // ---- calls (signaling rides the existing E2E pipe) --------------------
+  token(): string {
+    return this.id.token;
+  }
+  peerName(userId: string): string {
+    return this.state.conversations[userId]?.title ?? userId.slice(0, 8);
+  }
+  setCallSignalHandler(fn: (fromUserId: string, content: MessageContent) => void) {
+    this.callSignalHandler = fn;
+  }
+  /** Send a control content (e.g. WebRTC signaling) to a peer's devices. */
+  async sendControl(peerUserId: string, content: MessageContent): Promise<void> {
+    try {
+      await this.sendDmContent(peerUserId, content, crypto.randomUUID());
+    } catch (err) {
+      console.warn("control send failed", err);
+    }
   }
 
   fingerprint(): string {

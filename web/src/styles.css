@@ -106,6 +106,20 @@ form input {
 .bubble.out { align-self: flex-end; background: var(--out); border-bottom-right-radius: 4px; }
 .bubble-body { white-space: pre-wrap; word-break: break-word; }
 .bubble-meta { font-size: 0.66rem; opacity: 0.7; margin-top: 0.2rem; text-align: right; }
+.call-buttons { display: flex; gap: 0.35rem; }
+.call-buttons button { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 10px; padding: 0.35rem 0.55rem; font-size: 1rem; }
+.call-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 1rem; }
+.call-card { width: min(720px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 1.25rem; text-align: center; }
+.call-status { color: var(--muted); font-size: 0.85rem; }
+.call-peer { font-size: 1.4rem; font-weight: 700; margin: 0.25rem 0 1rem; }
+.call-video { position: relative; background: #000; border-radius: 12px; overflow: hidden; min-height: 280px; display: flex; align-items: center; justify-content: center; }
+.call-video .remote { width: 100%; max-height: 60vh; object-fit: contain; background: #000; }
+.call-video .local { position: absolute; right: 12px; bottom: 12px; width: 130px; border-radius: 8px; border: 2px solid var(--panel); object-fit: cover; }
+.call-video.audio-only .remote, .call-video.audio-only .local { display: none; }
+.call-avatar { font-size: 3rem; }
+.call-actions { display: flex; gap: 0.5rem; justify-content: center; margin-top: 1rem; }
+.call-actions button { padding: 0.6rem 1.2rem; border-radius: 12px; border: none; font-weight: 700; }
+.danger { background: #ef4444; color: #fff; }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50; }
 .modal { width: min(440px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 1.5rem; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
 .modal h2 { margin-top: 0; }

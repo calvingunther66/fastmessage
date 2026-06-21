@@ -9,6 +9,7 @@ import {
   type LoginRequest,
   type RegisterRequest,
   type ReplenishRequest,
+  type TurnResponse,
   type UserLookupResponse,
 } from "@fastmessage/shared";
 
@@ -99,6 +100,7 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, "upload_failed");
     return (await res.json()) as { blobId: string };
   },
+  turn: (token: string) => req<TurnResponse>("/turn", { token }),
   async downloadBlob(
     blobId: string,
     token: string,

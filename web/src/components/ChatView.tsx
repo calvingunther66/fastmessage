@@ -1,5 +1,6 @@
 import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "react";
 import { useMessenger } from "../hooks.js";
+import { calls } from "../lib/calls.js";
 import { messenger } from "../lib/messaging.js";
 import { Attachment } from "./Attachment.js";
 
@@ -54,6 +55,24 @@ export function ChatView() {
           </strong>
           <span className="chat-sub">{subtitle}</span>
         </div>
+        {conv.kind === "dm" && (
+          <div className="call-buttons">
+            <button
+              type="button"
+              title="Voice call"
+              onClick={() => void calls.startCall(conv.id, false)}
+            >
+              📞
+            </button>
+            <button
+              type="button"
+              title="Video call"
+              onClick={() => void calls.startCall(conv.id, true)}
+            >
+              🎥
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="messages">

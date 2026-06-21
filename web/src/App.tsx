@@ -1,4 +1,5 @@
 import { AuthScreen } from "./components/AuthScreen.js";
+import { CallOverlay } from "./components/CallOverlay.js";
 import { ChatView } from "./components/ChatView.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { useMessenger } from "./hooks.js";
@@ -24,6 +25,7 @@ export function App() {
     <div className="layout">
       <Sidebar />
       <ChatView />
+      <CallOverlay />
       {state.recoveryKey && <RecoveryKeyModal value={state.recoveryKey} />}
     </div>
   );
